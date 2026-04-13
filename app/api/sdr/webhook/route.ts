@@ -259,7 +259,7 @@ export async function POST(req: NextRequest) {
   // 10. Envia resposta ao lead
   const telefoneParaEnvio = lead.telefone
   try {
-    await sendText(telefoneParaEnvio, resposta.mensagem)
+    await sendText(telefoneParaEnvio, resposta.mensagem, lead.evotalks_chat_id)
   } catch (err) {
     console.error('Erro ao enviar mensagem via Evo Talks:', err)
   }

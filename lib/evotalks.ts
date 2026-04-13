@@ -120,15 +120,25 @@ export async function sendMessageToChat(
  */
 export async function sendText(
   number: string,
-  text: string
+  text: string,
+  knownChatId?: number | string | null
 ): Promise<void> {
-  // Tenta encontrar chat aberto
+  // 1. Usa chatId conhecido (salvo no lead) se disponível
+  if (knownChatId) {
+    try {
+      await sendMessageToChat(Number(knownChatId), text)
+      return
+    } catch (err) {
+      console.warn(`sendText: chatId ${knownChatId} falhou, tentando por número:`, err)
+    }
+  }
+  // 2. Tenta encontrar chat aberto pelo número
   const chatId = await getOpenChatId(number)
   if (chatId) {
     await sendMessageToChat(chatId, text)
     return
   }
-  // Sem chat aberto — tenta abrir com mensagem
+  // 3. Sem chat aberto — tenta abrir com mensagem
   await openChat(number, text)
 }
 
