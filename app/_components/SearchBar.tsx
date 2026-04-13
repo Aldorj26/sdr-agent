@@ -36,7 +36,7 @@ export default function SearchBar() {
           e.preventDefault()
           apply(q, status, importante)
         }}
-        style={{ display: 'flex', gap: '0.5rem', flex: 1, minWidth: 260 }}
+        style={{ display: 'flex', gap: '0.5rem', flex: '1 1 200px', minWidth: 200, maxWidth: 500 }}
       >
         <input
           type="text"
