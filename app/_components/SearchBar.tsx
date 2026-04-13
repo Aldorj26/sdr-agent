@@ -1,0 +1,102 @@
+'use client'
+
+import { useRouter, useSearchParams } from 'next/navigation'
+import { useState } from 'react'
+
+const STATUSES = [
+  'DISPARO_REALIZADO',
+  'INTERESSADO',
+  'AGUARDANDO',
+  'FORMULARIO_ENVIADO',
+  'SEM_RESPOSTA',
+  'NAO_QUALIFICADO',
+  'OPT_OUT',
+  'DESCARTADO',
+]
+
+export default function SearchBar() {
+  const router = useRouter()
+  const sp = useSearchParams()
+  const [q, setQ] = useState(sp.get('q') ?? '')
+  const [status, setStatus] = useState(sp.get('status') ?? '')
+
+  function apply(nextQ: string, nextStatus: string) {
+    const params = new URLSearchParams()
+    if (nextQ.trim()) params.set('q', nextQ.trim())
+    if (nextStatus) params.set('status', nextStatus)
+    router.push(params.toString() ? `/?${params.toString()}` : '/')
+  }
+
+  return (
+    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center', margin: '0.5rem 0 0' }}>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          apply(q, status)
+        }}
+        style={{ display: 'flex', gap: '0.5rem', flex: 1, minWidth: 260 }}
+      >
+        <input
+          type="text"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Buscar por nome, telefone ou cidade…"
+          style={{
+            flex: 1,
+            background: '#0f0f0f',
+            border: '1px solid #222',
+            color: '#eee',
+            padding: '0.5rem 0.75rem',
+            borderRadius: '0.25rem',
+            fontFamily: 'inherit',
+            fontSize: '0.85rem',
+          }}
+        />
+      </form>
+      <select
+        value={status}
+        onChange={(e) => {
+          setStatus(e.target.value)
+          apply(q, e.target.value)
+        }}
+        style={{
+          background: '#0f0f0f',
+          border: '1px solid #222',
+          color: '#eee',
+          padding: '0.5rem 0.75rem',
+          borderRadius: '0.25rem',
+          fontFamily: 'inherit',
+          fontSize: '0.85rem',
+        }}
+      >
+        <option value="">Todos os status</option>
+        {STATUSES.map((s) => (
+          <option key={s} value={s}>
+            {s}
+          </option>
+        ))}
+      </select>
+      {(q || status) && (
+        <button
+          onClick={() => {
+            setQ('')
+            setStatus('')
+            router.push('/')
+          }}
+          style={{
+            background: 'transparent',
+            border: '1px solid #333',
+            color: '#888',
+            padding: '0.5rem 0.75rem',
+            borderRadius: '0.25rem',
+            cursor: 'pointer',
+            fontFamily: 'inherit',
+            fontSize: '0.8rem',
+          }}
+        >
+          ✕ Limpar
+        </button>
+      )}
+    </div>
+  )
+}

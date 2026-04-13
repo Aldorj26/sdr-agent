@@ -1,0 +1,518 @@
+const BASE_URL = process.env.EVO_TALKS_BASE_URL!
+const QUEUE_ID = Number(process.env.EVO_TALKS_QUEUE_ID!)
+const QUEUE_API_KEY = process.env.EVO_TALKS_QUEUE_API_KEY!
+
+// ─── Tipos ────────────────────────────────────────────────────────────────────
+
+export interface OpenChatResult {
+  chatId: string | number
+  clientId: string | number
+  ok: boolean
+}
+
+export interface EnqueueResult {
+  enqueuedId: number
+}
+
+export interface ChatDetail {
+  chatId: string | number
+  clientId: string | number
+  number?: string
+  name?: string
+  status?: string
+}
+
+export interface IncomingMessage {
+  kId: number
+  mId?: string
+  chatId: string | number
+  clientId: string | number
+  queueId: number
+  direction: 'in' | 'out' | 'system-info' | 'info' | 'alert'
+  text?: string
+  messageTimestamp?: number
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+async function post<T>(path: string, body: Record<string, unknown>): Promise<T> {
+  const res = await fetch(`${BASE_URL}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ queueId: QUEUE_ID, apiKey: QUEUE_API_KEY, ...body }),
+  })
+
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`Evo Talks ${path} → ${res.status}: ${text}`)
+  }
+
+  return res.json() as Promise<T>
+}
+
+/**
+ * POST sem parse de JSON na resposta (para endpoints que retornam vazio ou texto).
+ */
+async function postRaw(path: string, body: Record<string, unknown>): Promise<void> {
+  const res = await fetch(`${BASE_URL}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ queueId: QUEUE_ID, apiKey: QUEUE_API_KEY, ...body }),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`Evo Talks ${path} → ${res.status}: ${text}`)
+  }
+}
+
+// ─── Funções principais ───────────────────────────────────────────────────────
+
+/**
+ * Abre um novo atendimento (chat) para o número informado.
+ * Retorna o chatId e clientId criados pelo Evo Talks.
+ */
+export async function openChat(
+  number: string,
+  message?: string
+): Promise<OpenChatResult> {
+  const body: Record<string, unknown> = { number }
+  if (message) body.message = message
+
+  const data = await post<Record<string, unknown>>('/int/openChat', body)
+
+  return {
+    chatId: (data.chatId ?? data.id ?? '') as string | number,
+    clientId: (data.clientId ?? '') as string | number,
+    ok: true,
+  }
+}
+
+/**
+ * Busca o chatId de um chat aberto pelo número do cliente.
+ */
+export async function getOpenChatId(
+  number: string
+): Promise<number | null> {
+  try {
+    const data = await post<{ openChats: number; chats: { chatId: number }[] }>(
+      '/int/getClientOpenChats',
+      { number }
+    )
+    return data.chats?.[0]?.chatId ?? null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Envia uma mensagem de texto em um chat já aberto (via chatId).
+ */
+export async function sendMessageToChat(
+  chatId: number,
+  text: string
+): Promise<{ mId: string; kId: number }> {
+  return post<{ mId: string; kId: number }>('/int/sendMessageToChat', { chatId, text })
+}
+
+/**
+ * Envia mensagem para um número — busca chatId aberto e envia.
+ * Fallback: tenta abrir chat novo se não houver chat aberto.
+ */
+export async function sendText(
+  number: string,
+  text: string
+): Promise<void> {
+  // Tenta encontrar chat aberto
+  const chatId = await getOpenChatId(number)
+  if (chatId) {
+    await sendMessageToChat(chatId, text)
+    return
+  }
+  // Sem chat aberto — tenta abrir com mensagem
+  await openChat(number, text)
+}
+
+/**
+ * Abre um novo chat e envia a primeira mensagem.
+ * Usado no disparo inicial D+0 e nos follow-ups.
+ */
+export async function openChatAndSend(
+  number: string,
+  text: string
+): Promise<{ chatId: string | number; clientId: string | number; enqueuedId: number }> {
+  // Abre o atendimento com a mensagem inicial já embutida
+  const chat = await openChat(number, text)
+
+  return {
+    chatId: chat.chatId,
+    clientId: chat.clientId,
+    enqueuedId: 0, // openChat já envia a mensagem
+  }
+}
+
+/**
+ * Envia template HSM aprovado pela Meta (Cloud API).
+ * templateId = ID numérico do template no painel Evo Talks.
+ * vars = array de strings para substituição de {{1}}, {{2}}, etc.
+ */
+export async function sendTemplate(
+  number: string,
+  templateId: number,
+  vars: string[] = [],
+  openNewChat = true
+): Promise<void> {
+  await post('/int/sendWaTemplate', {
+    number,
+    templateId,
+    data: vars,
+    openNewChat,
+  })
+}
+
+/**
+ * Busca os detalhes de um chat pelo chatId.
+ */
+export async function getChatDetail(chatId: string | number): Promise<ChatDetail> {
+  const data = await post<Record<string, unknown>>('/int/getChatDetail', { chatId })
+  return {
+    chatId: (data.chatId ?? data.id ?? chatId) as string | number,
+    clientId: (data.clientId ?? '') as string | number,
+    number: data.number as string | undefined,
+    name: data.name as string | undefined,
+    status: data.status as string | undefined,
+  }
+}
+
+/**
+ * Verifica se um número WhatsApp tem cadastro no Evo Talks.
+ */
+export async function checkUserExists(
+  number: string
+): Promise<{ exists: boolean; clientId: string }> {
+  return post('/int/checkIfUserExists', { number })
+}
+
+/**
+ * Gera uma URL pública para download de um arquivo do Evo Talks.
+ */
+export async function generateDownloadUrl(fileId: number): Promise<string> {
+  const data = await post<{ path: string; url?: string }>('/int/generateDownloadUrl', { fileId })
+  const path = data.url ?? data.path ?? ''
+  // Se for path relativo, adiciona o BASE_URL
+  if (path.startsWith('/')) return `${BASE_URL}${path}`
+  return path
+}
+
+/**
+ * Baixa um arquivo de áudio do Evo Talks e retorna como Buffer + mimeType.
+ */
+export async function downloadAudio(fileId: number): Promise<{ buffer: Buffer; mimeType: string }> {
+  const url = await generateDownloadUrl(fileId)
+  console.log(`Baixando áudio: ${url}`)
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(`Erro ao baixar áudio: ${res.status}`)
+  const arrayBuffer = await res.arrayBuffer()
+  const mimeType = res.headers.get('content-type') ?? 'audio/ogg'
+  return { buffer: Buffer.from(arrayBuffer), mimeType }
+}
+
+/**
+ * Envia dados de qualificação para o formulário HubSpot da UME/AIVA.
+ */
+export async function sendToHubSpot(data: {
+  nome_socio?: string | null
+  email_socio?: string | null
+  telefone?: string | null
+  nome_varejo?: string | null
+  cnpj_matriz?: string | null
+  faturamento_anual?: string | null
+  valor_boleto_mensal?: string | null
+  regiao_varejo?: string | null
+  numero_lojas?: string | null
+  localizacao_lojas?: string | null
+  possui_outra_financeira?: string | null
+  cnpjs_adicionais?: string | null
+}): Promise<void> {
+  const portalId = process.env.HUBSPOT_PORTAL_ID
+  const formGuid = process.env.HUBSPOT_FORM_GUID
+  if (!portalId || !formGuid) {
+    console.warn('HubSpot form não configurado')
+    return
+  }
+
+  // Separar nome e sobrenome
+  const nomeCompleto = data.nome_socio ?? ''
+  const partes = nomeCompleto.trim().split(/\s+/)
+  const firstName = partes[0] ?? ''
+  const lastName = partes.slice(1).join(' ') ?? ''
+
+  const fields = [
+    { objectTypeId: '0-1', name: 'firstname', value: firstName },
+    { objectTypeId: '0-1', name: 'lastname', value: lastName },
+    { objectTypeId: '0-1', name: 'email', value: data.email_socio ?? '' },
+    { objectTypeId: '0-1', name: 'phone', value: data.telefone ?? '' },
+    { objectTypeId: '0-2', name: 'name', value: data.nome_varejo ?? '' },
+    { objectTypeId: '0-2', name: 'cnpj', value: data.cnpj_matriz ?? '' },
+    { objectTypeId: '0-2', name: 'faturamento_anual_estimado', value: data.faturamento_anual ?? '' },
+    { objectTypeId: '0-2', name: 'venda_no_crediario_mensal', value: data.valor_boleto_mensal ?? '' },
+    { objectTypeId: '0-2', name: 'regiao', value: data.regiao_varejo ?? '' },
+    { objectTypeId: '0-2', name: 'numero_de_lojas', value: data.numero_lojas ?? '' },
+    { objectTypeId: '0-2', name: 'localizacao_das_lojas', value: data.localizacao_lojas ?? '' },
+    { objectTypeId: '0-2', name: 'concorrentes', value: data.possui_outra_financeira ?? '' },
+    { objectTypeId: '0-2', name: 'cnpjs_adicionais', value: data.cnpjs_adicionais ?? '' },
+  ].filter(f => f.value)
+
+  try {
+    const res = await fetch(
+      `https://api.hsforms.com/submissions/v3/integration/submit/${portalId}/${formGuid}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fields }),
+      }
+    )
+    if (!res.ok) {
+      const text = await res.text()
+      throw new Error(`HubSpot → ${res.status}: ${text}`)
+    }
+    console.log('HubSpot: formulário enviado com sucesso')
+  } catch (err) {
+    console.error('Erro ao enviar para HubSpot:', err)
+  }
+}
+
+/**
+ * Envia dados de qualificação para a planilha Google Sheets "AIVA APROVAÇÃO".
+ */
+export async function sendToGoogleSheets(data: {
+  nome_socio?: string | null
+  email_socio?: string | null
+  telefone?: string | null
+  nome_varejo?: string | null
+  cnpj_matriz?: string | null
+  faturamento_anual?: string | null
+  valor_boleto_mensal?: string | null
+  regiao_varejo?: string | null
+  numero_lojas?: string | null
+  localizacao_lojas?: string | null
+  possui_outra_financeira?: string | null
+  cnpjs_adicionais?: string | null
+  status?: string
+  opportunity_id?: string
+}): Promise<void> {
+  const url = process.env.GOOGLE_SHEETS_WEBHOOK_URL
+  if (!url) {
+    console.warn('GOOGLE_SHEETS_WEBHOOK_URL não configurada')
+    return
+  }
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+      redirect: 'follow',
+    })
+    if (!res.ok) throw new Error(`Google Sheets → ${res.status}`)
+    console.log('Google Sheets: dados enviados com sucesso')
+  } catch (err) {
+    console.error('Erro ao enviar para Google Sheets:', err)
+  }
+}
+
+/**
+ * Envia alerta via WhatsApp para um número (Nei ou Aldo).
+ */
+export async function alertHuman(number: string, message: string): Promise<void> {
+  try {
+    await sendText(number, message)
+  } catch (err) {
+    console.error(`Falha ao alertar ${number}:`, err)
+  }
+}
+
+// ─── CRM — Pipeline Campanha AIVA ───────────────────────────────────────────
+
+const PIPELINE_AIVA = 15
+const STAGES = {
+  INICIO: 66,
+  INTERESSADO: 47,
+  SEM_RESPOSTA: 53,
+  PRE_APROVACAO: 54,
+  CADASTRO_RECEBIDO: 49,
+  EM_ANALISE: 50,
+  CAF_PENDENTE: 51,
+  VALIDACAO_CONCLUIDA: 52,
+} as const
+
+export { STAGES }
+
+/**
+ * Cria uma oportunidade no pipeline Campanha AIVA.
+ * Retorna o ID da oportunidade criada.
+ */
+export async function createOpportunity(opts: {
+  title: string
+  number: string
+  city?: string
+  responsableId?: number
+  stageId?: number
+  tags?: string[]
+  chatId?: string | number
+  clientId?: string | number
+}): Promise<number> {
+  const body: Record<string, unknown> = {
+    fkPipeline: PIPELINE_AIVA,
+    fkStage: opts.stageId ?? STAGES.INTERESSADO,
+    responsableid: opts.responsableId ?? 507, // Nei (userId padrão)
+    title: opts.title,
+    mainphone: opts.number,
+    city: opts.city ?? '',
+  }
+  if (opts.chatId) body.fkChat = Number(opts.chatId)
+  if (opts.clientId) body.fkClient = Number(opts.clientId)
+
+  const data = await post<{ id: number }>('/int/createOpportunity', body)
+  return data.id
+}
+
+/**
+ * Vincula um chat a uma oportunidade existente.
+ */
+export async function linkChatToOpportunity(
+  opportunityId: number,
+  chatId: number
+): Promise<void> {
+  await post<{ id: number }>('/int/updateOpportunity', {
+    id: opportunityId,
+    fkChat: chatId,
+  })
+  console.log(`CRM: Chat #${chatId} vinculado à oportunidade #${opportunityId}`)
+}
+
+/**
+ * IDs das etiquetas (tags) no CRM Evo Talks.
+ * O endpoint updateOpportunity aceita um array de IDs numéricos em `tags`.
+ */
+export const TAG_IDS = {
+  AIVA: 69,
+  IMPORTANTE: 74,
+} as const
+
+/**
+ * Define as etiquetas (tags) de uma oportunidade existente.
+ * IMPORTANTE: isso SOBRESCREVE as tags atuais — inclua todas as que devem permanecer.
+ */
+export async function addOpportunityTags(
+  opportunityId: number,
+  tagIds: number[]
+): Promise<void> {
+  await post<{ id: number }>('/int/updateOpportunity', {
+    id: opportunityId,
+    tags: tagIds,
+  })
+  console.log(`CRM: Tags ${tagIds.join(', ')} aplicadas na oportunidade #${opportunityId}`)
+}
+
+/**
+ * Atualiza o título de uma oportunidade no CRM.
+ */
+export async function updateOpportunityTitle(
+  opportunityId: number,
+  title: string
+): Promise<void> {
+  await post<{ id: number }>('/int/updateOpportunity', {
+    id: opportunityId,
+    title,
+  })
+  console.log(`CRM: Título da oportunidade #${opportunityId} → "${title}"`)
+}
+
+/**
+ * Move uma oportunidade para outra etapa do funil.
+ */
+export async function changeOpportunityStage(
+  opportunityId: number,
+  destStageId: number
+): Promise<void> {
+  await postRaw('/int/changeOpportunityStage', {
+    id: opportunityId,
+    destStageId,
+  })
+}
+
+// Mapeamento: campo da VictorIA → ID do formulário "Qualificação Varejo" no Evo Talks
+const FORM_FIELD_MAP: Record<string, string> = {
+  nome_socio: 'da6ddf70',
+  email_socio: 'dafa40f0',
+  telefone_socio: 'db8569f0',
+  nome_varejo: 'dcacfa00',
+  cnpj_matriz: 'dd2ab580',
+  faturamento_anual: 'ddb960f0',
+  valor_boleto_mensal: 'de2cbc30',
+  regiao_varejo: 'dede58f0',
+  numero_lojas: 'df6f9c70',
+  localizacao_lojas: 'e0099280',
+  possui_outra_financeira: 'e07d62f0',
+  cnpjs_adicionais: 'e0f66380',
+}
+
+/**
+ * Busca os dados atuais de uma oportunidade.
+ */
+export async function getOpportunity(opportunityId: number): Promise<Record<string, unknown>> {
+  return post<Record<string, unknown>>('/int/getOpportunity', { id: opportunityId })
+}
+
+/**
+ * Atualiza os campos do formulário "Qualificação Varejo" na oportunidade.
+ * Faz MERGE com dados existentes (não sobrescreve campos já preenchidos).
+ */
+export async function updateOpportunityForms(
+  opportunityId: number,
+  dados: Record<string, string | null | undefined>,
+  telefone?: string
+): Promise<void> {
+  const newFields: Record<string, string> = {}
+
+  for (const [key, value] of Object.entries(dados)) {
+    if (value && FORM_FIELD_MAP[key]) {
+      newFields[FORM_FIELD_MAP[key]] = value
+    }
+  }
+
+  // Telefone do sócio = número do WhatsApp do lead
+  if (telefone) {
+    newFields[FORM_FIELD_MAP.telefone_socio] = telefone
+  }
+
+  if (Object.keys(newFields).length === 0) return
+
+  // Busca dados existentes para fazer merge
+  const opp = await getOpportunity(opportunityId)
+  const existingForms = (opp.formsdata ?? {}) as Record<string, string | null>
+
+  // Merge: dados existentes + novos (novos sobrescrevem)
+  const merged: Record<string, string | null> = { ...existingForms }
+  for (const [id, value] of Object.entries(newFields)) {
+    merged[id] = value
+  }
+
+  await post<{ id: number }>('/int/updateOpportunity', {
+    id: opportunityId,
+    formsdata: merged,
+  })
+  console.log(`CRM: Formulário atualizado na oportunidade #${opportunityId}:`, Object.keys(newFields).length, 'novos campos')
+}
+
+/**
+ * Adiciona uma nota à oportunidade.
+ */
+export async function addOpportunityNote(
+  opportunityId: number,
+  note: string
+): Promise<void> {
+  await postRaw('/int/insertOpportunityNote', {
+    id: opportunityId,
+    note,
+  })
+}
