@@ -3,8 +3,11 @@ import { supabaseAdmin, saveMensagem, getMensagens, type Lead } from '@/lib/supa
 import { sendText } from '@/lib/evotalks'
 import { processarMensagem } from '@/lib/claude'
 
+export const maxDuration = 60
+
 const TRES_HORAS_MS = 3 * 60 * 60 * 1000
 const VINTE_QUATRO_HORAS_MS = 24 * 60 * 60 * 1000
+const MAX_LEADS_POR_EXECUCAO = 5
 
 /**
  * Cron de nudge — cutuca leads com conversa parada há 3+ horas.
@@ -50,8 +53,13 @@ export async function POST(req: NextRequest) {
   const agora = Date.now()
   let enviados = 0
   let pulados = 0
+  let processadosComClaude = 0
 
   for (const lead of leads as Lead[]) {
+    if (processadosComClaude >= MAX_LEADS_POR_EXECUCAO) {
+      pulados++
+      continue
+    }
     try {
       const mensagens = await getMensagens(lead.id, 10)
 
@@ -103,13 +111,15 @@ export async function POST(req: NextRequest) {
 
       console.log(`Nudge enviado para ${lead.nome} (${lead.telefone}) — ${outConsecutivos + 1}º out consecutivo`)
       enviados++
+      processadosComClaude++
     } catch (err) {
       console.error(`Erro no nudge do lead ${lead.id}:`, err)
       pulados++
+      processadosComClaude++
     }
   }
 
-  return NextResponse.json({ ok: true, total: leads.length, enviados, pulados })
+  return NextResponse.json({ ok: true, total: leads.length, enviados, pulados, limite: MAX_LEADS_POR_EXECUCAO })
 }
 
 // Vercel Cron — roda a cada hora
