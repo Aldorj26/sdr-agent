@@ -1,3 +1,4 @@
+// Auto-reprocess v2 — polling Evo Talks + Supabase
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin, saveMensagem } from '@/lib/supabase'
 import { getChatMessages } from '@/lib/evotalks'
