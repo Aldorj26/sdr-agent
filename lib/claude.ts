@@ -129,6 +129,9 @@ export async function processarMensagem(
     messages.push({ role: 'user', content: mensagemRecebida })
   }
 
+  // Prefill: força o Claude a começar a resposta com "{" (garante JSON)
+  messages.push({ role: 'assistant', content: '{' })
+
   const response = await getClient().messages.create({
     model: 'claude-sonnet-4-5',
     max_tokens: 1024,
@@ -141,8 +144,9 @@ export async function processarMensagem(
     .map((b) => (b as Anthropic.TextBlock).text)
     .join('')
 
-  // Parse do JSON retornado pelo Claude (extrai JSON mesmo se houver texto ao redor)
-  const jsonMatch = text.match(/\{[\s\S]*\}/)
+  // Parse do JSON — o prefill já fornece o "{" inicial
+  const fullJson = `{${text}`
+  const jsonMatch = fullJson.match(/\{[\s\S]*\}/)
   if (!jsonMatch) {
     throw new Error(`Claude não retornou JSON válido: ${text.substring(0, 200)}`)
   }
