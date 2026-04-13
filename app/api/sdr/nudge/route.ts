@@ -97,6 +97,24 @@ export async function POST(req: NextRequest) {
         continue
       }
 
+      // Guard de concorrência: marca data_ultimo_contato ANTES de enviar.
+      // Se outra instância já atualizou nos últimos 10 min, pula (evita rajada duplicada).
+      const DEZ_MIN_MS = 10 * 60 * 1000
+      const ultimoContatoMs = lead.data_ultimo_contato ? new Date(lead.data_ultimo_contato).getTime() : 0
+      if (agora - ultimoContatoMs < DEZ_MIN_MS) {
+        pulados++
+        continue
+      }
+      const { error: lockError } = await supabaseAdmin
+        .from('sdr_leads')
+        .update({ data_ultimo_contato: new Date().toISOString() })
+        .eq('id', lead.id)
+        .eq('data_ultimo_contato', lead.data_ultimo_contato) // só atualiza se não mudou (CAS)
+      if (lockError) {
+        pulados++ // outra instância ganhou a corrida
+        continue
+      }
+
       // Gera nudge contextual via Claude usando o histórico
       const nudgeInstrucao = '[INSTRUÇÃO DO SISTEMA: O lead parou de responder há mais de 3 horas. Envie UMA mensagem curta e natural de follow-up para retomar a conversa. Não repita informações já ditas. Seja breve e direto — máximo 2 linhas. Retome a última pergunta de forma diferente ou ofereça ajuda.]'
 
@@ -104,10 +122,6 @@ export async function POST(req: NextRequest) {
 
       await sendText(lead.telefone, resposta.mensagem)
       await saveMensagem(lead.id, 'out', resposta.mensagem)
-      await supabaseAdmin
-        .from('sdr_leads')
-        .update({ data_ultimo_contato: new Date().toISOString() })
-        .eq('id', lead.id)
 
       console.log(`Nudge enviado para ${lead.nome} (${lead.telefone}) — ${outConsecutivos + 1}º out consecutivo`)
       enviados++
