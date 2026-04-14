@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin, saveMensagem } from '@/lib/supabase'
-import { sendTemplate, createOpportunity, STAGES } from '@/lib/evotalks'
+import { sendTemplate, createOpportunity, STAGES, checkUserExists } from '@/lib/evotalks'
 
 interface LeadInput {
   nome: string
@@ -21,9 +21,23 @@ export async function POST(req: NextRequest) {
   const resultados: { telefone: string; ok: boolean; lead_id?: string; erro?: string }[] = []
   let sucesso = 0
   let falha = 0
+  let invalidos = 0
 
   for (const lead of leads) {
     try {
+      // 0. Valida que o numero existe no WhatsApp antes de gastar HSM
+      try {
+        const check = await checkUserExists(lead.telefone)
+        if (!check.exists) {
+          resultados.push({ telefone: lead.telefone, ok: false, erro: 'numero_sem_whatsapp' })
+          invalidos++
+          continue
+        }
+      } catch (err) {
+        // Se o check falhar, seguimos com o disparo (fail-open, nao bloqueia)
+        console.warn(`checkUserExists falhou para ${lead.telefone}:`, err)
+      }
+
       // 1. Upsert lead no Supabase
       const { data: leadData, error: upsertError } = await supabaseAdmin
         .from('sdr_leads')
@@ -66,14 +80,16 @@ export async function POST(req: NextRequest) {
       }
 
       // 3. Envia template HSM via Evo Talks
+      // Variaveis do template — texto mais direto e conversacional
+      // (a estrutura do template HSM e fixa, mas o conteudo das vars e customizavel)
       const vars = [
-        'Financiamento de Celular com Garantia',
-        'quer vender mais celulares sem assumir risco?',
-        'A *AIVA*, especialista em financiamento de celulares, oferece:',
-        '✅ *Aprovação rápida*',
-        '✅ *Menores taxas do mercado*',
-        '✅ *Garantia da operação*',
-        '✅ *Recebimento da venda em D+2 direto na sua conta*',
+        'Vender mais celulares sem risco de calote',
+        'vi que vocês trabalham com venda de celular e queria apresentar uma parceria rapida:',
+        'A *AIVA* ajuda lojas como a sua a venderem mais — sem dor de cabeça:',
+        '*Aprovação do cliente em 2 minutos*',
+        '*Você recebe em 2 dias úteis*',
+        '*Zero risco de inadimplência (o risco é nosso)*',
+        '*Parcelamento em até 12x pro cliente*',
       ]
       await sendTemplate(lead.telefone, HSM_TEMPLATE_ID, vars)
 
@@ -91,5 +107,5 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ ok: true, total: leads.length, sucesso, falha, resultados })
+  return NextResponse.json({ ok: true, total: leads.length, sucesso, falha, invalidos, resultados })
 }
