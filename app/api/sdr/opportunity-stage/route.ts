@@ -93,10 +93,11 @@ export async function POST(req: NextRequest) {
       const forms = (opp.formsdata ?? {}) as Record<string, string | null>
 
       // Nome do contato (preferimos nome do sócio; fallback para título da opp)
-      const nomeContato =
+      const nomeRaw =
         forms['da6ddf70'] ||
         (typeof opp.title === 'string' ? opp.title.split('—')[0].trim() : '') ||
-        'Lojista'
+        ''
+      const nomeContato = normalizaNome(nomeRaw)
 
       // Telefone da oportunidade
       const telefone = (opp.mainphone ?? forms['db8569f0'] ?? '').toString().replace(/\D/g, '')
@@ -129,10 +130,15 @@ export async function POST(req: NextRequest) {
 
       // Aviso complementar sobre CNPJ matriz/filial (não está no template HSM).
       // Enviado como texto livre — janela de 24h já foi aberta pelo template acima.
+      const saudacao = nomeContato ? `${nomeContato}, uma` : 'Olá! Uma'
       const avisoMatrizMsg =
-        `${nomeContato}, um aviso importante sobre o cadastro:\n\n` +
-        `Se você tem mais de uma loja com CNPJ *matriz* (cada uma com raiz de CNPJ diferente), precisa fazer um cadastro para cada matriz. Filiais (mesma raiz de CNPJ) não precisam de cadastro separado.\n\n` +
-        `Qualquer dúvida durante o preenchimento, pode me chamar aqui.`
+        `${saudacao} dica rápida pra agilizar seu cadastro:\n\n` +
+        `Quantas lojas você vai cadastrar na AIVA?\n\n` +
+        `*Se for só 1 loja*: pode seguir direto no link, é um cadastro só.\n\n` +
+        `*Se forem 2 ou mais*: preciso saber se elas têm CNPJs totalmente diferentes (são matrizes independentes) ou se são filiais da mesma empresa (mesmo CNPJ com finais diferentes tipo 0001, 0002).\n\n` +
+        `- *Matrizes diferentes*: um cadastro para cada CNPJ raiz\n` +
+        `- *Filiais do mesmo CNPJ*: um cadastro só cobre todas\n\n` +
+        `Me conta aqui quantas lojas você tem antes de começar, que eu te oriento no caminho certo. Assim evitamos retrabalho.`
 
       try {
         await sendText(telefone, avisoMatrizMsg)
@@ -152,7 +158,7 @@ export async function POST(req: NextRequest) {
           {
             lead_id: lead.id,
             direcao: 'out',
-            conteudo: `[Template (CAMPANHA) Link de Cadastro enviado — ${nomeContato}]`,
+            conteudo: `[Template (CAMPANHA) Link de Cadastro enviado — ${nomeContato ?? 'Lojista'}]`,
             template_hsm: 'aiva_link_cadastro',
           },
           {
@@ -172,4 +178,36 @@ export async function POST(req: NextRequest) {
   }
 
   return NextResponse.json({ ok: true, ignorado: `stage ${destStageId} sem ação configurada` })
+}
+
+/**
+ * Normaliza o nome do sócio:
+ * - Pega só o primeiro nome
+ * - Capitaliza a primeira letra, resto minúsculas
+ * - Retorna null se for inválido (vazio, curto, só numeros, repetido, palavra de teste)
+ */
+function normalizaNome(raw: string): string | null {
+  if (!raw) return null
+  const trimmed = raw.trim()
+  if (trimmed.length < 2) return null
+
+  // Pega só o primeiro "token" (primeiro nome)
+  const primeiro = trimmed.split(/\s+/)[0]
+  if (!primeiro || primeiro.length < 2) return null
+
+  // Rejeita se for só números
+  if (/^\d+$/.test(primeiro)) return null
+
+  // Rejeita se todas as letras forem iguais (ex: "aaaa", "xxxx")
+  if (/^(.)\1+$/i.test(primeiro)) return null
+
+  // Rejeita palavras comuns de teste/genéricas
+  const invalidos = new Set([
+    'teste', 'test', 'asdf', 'qwerty', 'lojista', 'loja',
+    'xxx', 'aaa', 'nome', 'cliente', 'usuario', 'varejo',
+  ])
+  if (invalidos.has(primeiro.toLowerCase())) return null
+
+  // Capitaliza: primeira letra maiúscula, resto minúsculas
+  return primeiro.charAt(0).toUpperCase() + primeiro.slice(1).toLowerCase()
 }
