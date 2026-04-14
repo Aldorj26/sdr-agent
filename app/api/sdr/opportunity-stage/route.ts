@@ -9,17 +9,45 @@ import { supabaseAdmin } from '@/lib/supabase'
  *   com link de onboarding completo (retail-onboarding-hub).
  */
 export async function POST(req: NextRequest) {
+  // Captura headers e body pra debug (SEMPRE loga, mesmo em 401)
+  const headersObj: Record<string, string> = {}
+  req.headers.forEach((value, key) => { headersObj[key] = value })
+
+  let rawBody = ''
+  let payload: Record<string, unknown> = {}
+  try {
+    rawBody = await req.text()
+    payload = rawBody ? JSON.parse(rawBody) : {}
+  } catch {
+    payload = { _raw: rawBody }
+  }
+
   // Valida autenticação
   const secret = req.headers.get('x-internal-secret') ?? ''
-  if (secret !== process.env.WEBHOOK_SECRET) {
+  const authOk = secret === process.env.WEBHOOK_SECRET
+
+  // Log do request recebido (pra debug do Evo Talks)
+  try {
+    await supabaseAdmin.from('webhook_debug').insert({
+      endpoint: '/api/sdr/opportunity-stage',
+      method: 'POST',
+      headers: headersObj,
+      body: payload,
+      status_code: authOk ? 200 : 401,
+      ip: req.headers.get('x-forwarded-for') ?? req.headers.get('x-real-ip') ?? null,
+      user_agent: req.headers.get('user-agent') ?? null,
+    })
+  } catch (err) {
+    console.error('webhook_debug insert falhou:', err)
+  }
+
+  if (!authOk) {
     return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
   }
 
-  const payload = await req.json()
-
   // Extrai dados do payload do Evo Talks
-  const opportunityId = payload.opportunityId ?? payload.id ?? payload.opportunity?.id ?? null
-  const destStageId = payload.destStageId ?? payload.stageId ?? payload.fkStage ?? payload.opportunity?.fkStage ?? null
+  const opportunityId = payload.opportunityId ?? (payload as Record<string, unknown>).id ?? (payload.opportunity as Record<string, unknown>)?.id ?? null
+  const destStageId = payload.destStageId ?? (payload as Record<string, unknown>).stageId ?? (payload as Record<string, unknown>).fkStage ?? (payload.opportunity as Record<string, unknown>)?.fkStage ?? null
 
   console.log(`Opportunity stage webhook: oppId=${opportunityId}, stageId=${destStageId}`)
 
