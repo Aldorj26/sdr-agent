@@ -1,5 +1,6 @@
 'use client'
 
+import { useRouter } from 'next/navigation'
 import {
   ResponsiveContainer,
   LineChart,
@@ -80,10 +81,26 @@ export function DistribuicaoStatus({
 }: {
   data: Array<{ status: string; total: number }>
 }) {
+  const router = useRouter()
   const filtered = data.filter((d) => d.total > 0)
+
+  function filtrarPorStatus(status: string) {
+    router.push(`/?status=${encodeURIComponent(status)}`)
+    // Scroll suave até a tabela de leads
+    setTimeout(() => {
+      const tabela = document.querySelector('.tbl')
+      if (tabela) tabela.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }, 150)
+  }
+
   return (
     <div className="chart-card">
-      <div className="chart-title">Distribuição por status</div>
+      <div className="chart-title">
+        Distribuição por status
+        <span style={{ fontSize: 10, color: '#5b6170', marginLeft: 8, fontWeight: 400 }}>
+          (clique para filtrar)
+        </span>
+      </div>
       <ResponsiveContainer width="100%" height={220}>
         <PieChart>
           <Pie
@@ -95,6 +112,12 @@ export function DistribuicaoStatus({
             innerRadius={45}
             outerRadius={80}
             paddingAngle={2}
+            onClick={(entry) => {
+              const e = entry as unknown as { status?: string; payload?: { status?: string } }
+              const status = e?.status ?? e?.payload?.status
+              if (status) filtrarPorStatus(status)
+            }}
+            style={{ cursor: 'pointer' }}
           >
             {filtered.map((entry) => (
               <Cell
@@ -117,7 +140,13 @@ export function DistribuicaoStatus({
           <Legend
             wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
             iconType="circle"
-            formatter={(v) => <span style={{ color: '#9096a3' }}>{v}</span>}
+            onClick={(entry) => {
+              const e = entry as unknown as { value?: string }
+              if (e?.value) filtrarPorStatus(e.value)
+            }}
+            formatter={(v) => (
+              <span style={{ color: '#9096a3', cursor: 'pointer' }}>{v}</span>
+            )}
           />
         </PieChart>
       </ResponsiveContainer>

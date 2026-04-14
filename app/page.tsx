@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import { supabaseAdmin } from '@/lib/supabase'
 import LeadDrawer from './_components/LeadDrawer'
 import ClickableRow from './_components/ClickableRow'
@@ -16,15 +17,51 @@ async function getMetricas() {
   return data ?? []
 }
 
-async function getRecentLeads(q?: string, status?: string, importante?: string) {
+async function getRecentLeads(
+  q?: string,
+  status?: string,
+  importante?: string,
+  aguardandoHumano?: string,
+  pausados?: string,
+  followupHoje?: string,
+  lockTravado?: string,
+) {
+  const temFiltro = Boolean(q || status || importante || aguardandoHumano || pausados || followupHoje || lockTravado)
+
   let query = supabaseAdmin
     .from('sdr_leads')
     .select('id, nome, telefone, cidade, status, data_ultimo_contato, importante')
     .order('data_ultimo_contato', { ascending: false, nullsFirst: false })
-    .limit(q || status || importante ? 50 : 10)
+    .limit(temFiltro ? 100 : 10)
 
   if (status) query = query.eq('status', status)
   if (importante === 'true') query = query.eq('importante', true)
+
+  if (aguardandoHumano === 'true') {
+    query = query
+      .eq('acionar_humano', true)
+      .not('status', 'in', '("FORMULARIO_ENVIADO","OPT_OUT","NAO_QUALIFICADO","DESCARTADO")')
+  }
+
+  if (pausados === 'true') {
+    query = query.like('observacoes', '%[PAUSA_ATE:%')
+  }
+
+  if (followupHoje === 'true') {
+    const fimDoDia = new Date()
+    fimDoDia.setHours(23, 59, 59, 999)
+    query = query
+      .lte('data_proximo_followup', fimDoDia.toISOString())
+      .not('status', 'in', '("OPT_OUT","NAO_QUALIFICADO","DESCARTADO","FORMULARIO_ENVIADO")')
+  }
+
+  if (lockTravado === 'true') {
+    const umMinutoAtras = new Date(Date.now() - 60 * 1000).toISOString()
+    query = query
+      .not('webhook_lock_at', 'is', null)
+      .lt('webhook_lock_at', umMinutoAtras)
+  }
+
   if (q && q.trim()) {
     const term = q.trim()
     query = query.or(`nome.ilike.%${term}%,telefone.ilike.%${term}%,cidade.ilike.%${term}%`)
@@ -246,19 +283,37 @@ function StatusPill({ status }: { status: string }) {
 export default async function Page({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; status?: string; importante?: string }>
+  searchParams: Promise<{
+    q?: string
+    status?: string
+    importante?: string
+    aguardando_humano?: string
+    pausados?: string
+    followup_hoje?: string
+    lock_travado?: string
+  }>
 }) {
   const sp = await searchParams
   const [metricas, leads, agora, timeline, agenda, saude, msgsPorDia] = await Promise.all([
     getMetricas(),
-    getRecentLeads(sp.q, sp.status, sp.importante),
+    getRecentLeads(
+      sp.q,
+      sp.status,
+      sp.importante,
+      sp.aguardando_humano,
+      sp.pausados,
+      sp.followup_hoje,
+      sp.lock_travado,
+    ),
     getAgora(),
     getTimeline(),
     getAgenda(),
     getSaude(),
     getMensagensPorDia(),
   ])
-  const filtroAtivo = Boolean(sp.q || sp.status || sp.importante)
+  const filtroAtivo = Boolean(
+    sp.q || sp.status || sp.importante || sp.aguardando_humano || sp.pausados || sp.followup_hoje || sp.lock_travado,
+  )
   const total = metricas.reduce((s: number, m: { total: number }) => s + Number(m.total), 0)
 
   // Funil
@@ -326,30 +381,35 @@ export default async function Page({
           value={agora.conversasAtivas}
           hint="INTERESSADO nas últimas 2h"
           color="var(--green)"
+          href="/?status=INTERESSADO"
         />
         <Card
           label="Aguardando humano"
           value={agora.aguardandoHumano}
           hint="acionar_humano = true"
           color={agora.aguardandoHumano > 0 ? 'var(--yellow)' : 'var(--text-muted)'}
+          href="/?aguardando_humano=true"
         />
         <Card
           label="Pausados"
           value={agora.pausados}
           hint="flag [PAUSA_ATE:]"
           color="var(--purple)"
+          href="/?pausados=true"
         />
         <Card
           label="Follow-ups hoje"
           value={agora.followupsHoje}
           hint="próximo_followup ≤ hoje"
           color="var(--accent)"
+          href="/?followup_hoje=true"
         />
         <Card
           label="Lock travado"
           value={agora.lockTravado}
           hint="webhook_lock_at > 60s"
           color={agora.lockTravado > 0 ? 'var(--red)' : 'var(--text-muted)'}
+          href="/?lock_travado=true"
         />
       </div>
 
@@ -590,17 +650,27 @@ function Card({
   value,
   hint,
   color,
+  href,
 }: {
   label: string
   value: number
   hint: string
   color: string
+  href?: string
 }) {
-  return (
-    <div className="card">
+  const inner = (
+    <>
       <div className="card-label">{label}</div>
       <div className="card-value" style={{ color }}>{value}</div>
       <div className="card-hint">{hint}</div>
-    </div>
+    </>
   )
+  if (href) {
+    return (
+      <Link href={href} className="card card-clickable" style={{ textDecoration: 'none' }}>
+        {inner}
+      </Link>
+    )
+  }
+  return <div className="card">{inner}</div>
 }
