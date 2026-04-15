@@ -31,6 +31,7 @@ export const config = {
   // - arquivos estáticos (favicon, etc)
   matcher: [
     '/',
+    '/campanha',
     '/api/leads/:path*',
   ],
 }

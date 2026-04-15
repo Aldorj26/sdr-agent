@@ -376,12 +376,27 @@ export default async function Page({
           >
             🤖
           </div>
-          <div>
+          <div style={{ flex: 1 }}>
             <h1>SDR Agent AIVA</h1>
             <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.82rem' }}>
               Track Tecnologia · VictorIA · {new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}
             </p>
           </div>
+          <Link
+            href="/campanha"
+            style={{
+              background: 'linear-gradient(135deg, #60a5fa, #a78bfa)',
+              color: '#fff',
+              textDecoration: 'none',
+              padding: '0.55rem 1rem',
+              borderRadius: 8,
+              fontSize: '0.85rem',
+              fontWeight: 600,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            + Disparar campanha
+          </Link>
         </div>
       </header>
 
