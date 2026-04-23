@@ -5,12 +5,16 @@ import { createClient } from '@supabase/supabase-js'
 export type LeadStatus =
   | 'DISPARO_REALIZADO'
   | 'INTERESSADO'
-  | 'FORMULARIO_ENVIADO'
+  | 'FORMULARIO_ENVIADO' // legacy — não usado no fluxo novo, mantido pra leads antigos
   | 'SEM_RESPOSTA'
   | 'OPT_OUT'
   | 'NAO_QUALIFICADO'
   | 'AGUARDANDO'
   | 'DESCARTADO'
+  | 'BOT_DETECTADO' // número respondido por chatbot/atendimento automático sem acesso ao decisor
+  | 'AGUARDANDO_APROVACAO' // 7 dados coletados, no stage 54 esperando análise
+  | 'COLETANDO_COMPLEMENTO' // operador moveu pro stage 49, coletando 5 dados restantes
+  | 'CADASTRO_COMPLETO' // 12 dados coletados, HubSpot disparado
 
 export interface Lead {
   id: string

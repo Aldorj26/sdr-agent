@@ -367,6 +367,7 @@ const STAGES = {
   EM_ANALISE: 50,
   CAF_PENDENTE: 51,
   VALIDACAO_CONCLUIDA: 52,
+  BOT_DETECTADO: 69,
 } as const
 
 export { STAGES }
