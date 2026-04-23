@@ -9,6 +9,7 @@ import {
   releaseWebhookLock,
   mensagemMidExiste,
   supabaseAdmin,
+  type Lead,
   type LeadStatus,
   type Mensagem,
 } from '@/lib/supabase'
@@ -45,6 +46,20 @@ function dedupConsecutiveIn(msgs: Mensagem[]): Mensagem[] {
     result.push(curr)
   }
   return result
+}
+
+/**
+ * Remove mensagens 'out' que são apenas marcadores internos (ex: "[Template X
+ * enviado — Fulano]"). Esses logs poluem o histórico passado pra VictorIA e
+ * confundem a fase — ela pode interpretar como uma mensagem dela mesma e ficar
+ * ambígua sobre o estado da conversa. Só mensagens conversacionais reais devem
+ * chegar no Claude.
+ */
+function stripInternalMarkers(msgs: Mensagem[]): Mensagem[] {
+  return msgs.filter((m) => {
+    if (m.direcao !== 'out') return true
+    return !/^\[.*\]$/.test(m.conteudo.trim())
+  })
 }
 
 export async function POST(req: NextRequest) {
@@ -133,6 +148,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, admin: true, comando: conteudo.split(/\s+/)[0] })
   }
 
+  // Admin mandando mensagem comum (não comando) — apenas reabre a janela 24h
+  // pro alertHuman funcionar. Responde algo simples e não cria lead.
+  if (isAdmin(adminTelefone)) {
+    console.log(`Admin ${adminTelefone} mandou mensagem comum: ${conteudo.slice(0, 50)}`)
+    try {
+      await respondToAdmin(
+        adminTelefone,
+        'Oi! Sou o agente SDR da Track. Janela 24h reaberta — vou conseguir te enviar alertas de novos leads por aqui. Use /ajuda pra ver os comandos.'
+      )
+    } catch (err) {
+      console.error(`Falha ao responder admin ${adminTelefone}:`, err)
+    }
+    return NextResponse.json({ ok: true, admin: true, ignorado: 'admin_msg_comum' })
+  }
+
   // 4. Busca o lead — tenta por chatId, telefone do remoteJid, ou clientId
   let lead = chatId ? await getLeadByChatId(chatId) : null
 
@@ -165,8 +195,57 @@ export async function POST(req: NextRequest) {
   }
 
   if (!lead) {
-    console.log(`Lead não encontrado: chatId=${chatId}, clientId=${clientId}, remoteJid=${remoteJid}, userExtId=${userExtId}`)
-    return NextResponse.json({ ok: true, ignorado: 'lead_nao_encontrado' })
+    // Lead desconhecido mandou mensagem → cria automaticamente e processa.
+    // Isso captura leads orgânicos (indicação, busca, etc.) que mandam msg
+    // pro número do WhatsApp direto, sem ter passado por uma campanha.
+    const telNormalizado =
+      remoteJid?.replace('@s.whatsapp.net', '').replace('@c.us', '') ||
+      (clientId?.startsWith('55') ? clientId : `55${clientId}`) ||
+      `55${userExtId}`
+
+    if (!telNormalizado || telNormalizado.length < 12) {
+      console.log(`Lead desconhecido com telefone inválido: ${telNormalizado}`)
+      return NextResponse.json({ ok: true, ignorado: 'telefone_invalido' })
+    }
+
+    console.log(`Lead desconhecido ${telNormalizado} — criando automaticamente`)
+
+    const { data: novoLead, error: insertErr } = await supabaseAdmin
+      .from('sdr_leads')
+      .insert({
+        nome: 'Loja',
+        telefone: telNormalizado,
+        produto: 'AIVA',
+        status: 'INTERESSADO',
+        etapa_cadencia: 3,
+        data_disparo_inicial: new Date().toISOString(),
+        data_ultimo_contato: new Date().toISOString(),
+        evotalks_chat_id: chatId || null,
+        evotalks_client_id: clientId || null,
+      })
+      .select('*')
+      .single()
+
+    if (insertErr || !novoLead) {
+      // Se falhou por UNIQUE constraint, o lead já existe mas não encontramos
+      // (pode ser formato de telefone diferente). Tenta buscar mais uma vez.
+      if (insertErr?.code === '23505') {
+        lead = await getLeadByTelefone(telNormalizado)
+      }
+      if (!lead) {
+        console.error(`Erro ao criar lead automático ${telNormalizado}:`, insertErr?.message)
+        return NextResponse.json({ ok: true, ignorado: 'erro_criar_lead', erro: insertErr?.message })
+      }
+    } else {
+      lead = novoLead as Lead
+      console.log(`Lead orgânico criado: ${lead.id} (${telNormalizado})`)
+    }
+  }
+
+  // Guard: TypeScript não consegue inferir que lead é non-null depois de todos
+  // os branches acima (cada um retorna ou atribui). Assert pra silenciar.
+  if (!lead) {
+    return NextResponse.json({ ok: true, ignorado: 'lead_null_inesperado' })
   }
 
   // 5. Ignora leads em status final
@@ -187,13 +266,38 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // 6. Lead com formulário enviado — avisa Nei e encerra
-  if (lead.status === 'FORMULARIO_ENVIADO') {
+  // 5c. Atendimento automático detectado — limite de 10 respostas.
+  // Flag setado pela VictorIA quando ela identifica bot/auto-reply do outro lado
+  // (ver /prompts/aiva.ts, seção "REGRA SOBRE ATENDIMENTO AUTOMÁTICO").
+  // Depois do flag, contamos quantas respostas já foram enviadas. Se >= 10,
+  // paramos silenciosamente pra não gastar tokens em loop com outro bot.
+  if (lead.observacoes?.includes('[AUTO_DETECTED')) {
+    const { count: outCount } = await supabaseAdmin
+      .from('sdr_mensagens')
+      .select('id', { count: 'exact', head: true })
+      .eq('lead_id', lead.id)
+      .eq('direcao', 'out')
+    if ((outCount ?? 0) >= 10) {
+      console.log(`Lead ${lead.telefone}: atendimento auto detectado e >=10 respostas, ignorando`)
+      return NextResponse.json({
+        ok: true,
+        ignorado: 'atendimento_automatico_cap_10',
+        out_count: outCount ?? 0,
+      })
+    }
+    console.log(
+      `Lead ${lead.telefone}: atendimento auto detectado, ${outCount ?? 0}/10 respostas`
+    )
+  }
+
+  // 6. Lead com cadastro finalizado — avisa Nei e encerra.
+  // FORMULARIO_ENVIADO é legacy (fluxo antigo). CADASTRO_COMPLETO é o novo.
+  if (lead.status === 'FORMULARIO_ENVIADO' || lead.status === 'CADASTRO_COMPLETO') {
     const alerta =
-      `⚠️ *${lead.nome}* (${lead.telefone}) respondeu após qualificação completa.\n` +
+      `⚠️ *${lead.nome}* (${lead.telefone}) respondeu após cadastro completo.\n` +
       `Mensagem: "${conteudo}"\n\nAcompanhe no Evo Talks.`
     await alertHuman(process.env.NEI_WHATSAPP!, alerta)
-    return NextResponse.json({ ok: true, ignorado: 'formulario_ja_enviado' })
+    return NextResponse.json({ ok: true, ignorado: 'cadastro_ja_completo' })
   }
 
   // 7. Idempotência — se o mesmo mId (messageid do WhatsApp) já foi salvo,
@@ -230,10 +334,11 @@ export async function POST(req: NextRequest) {
       iteracao++
       const loopStart = new Date().toISOString()
 
-    // 8. Busca histórico (inclui as msgs que chegaram durante o debounce)
-    // e deduplica rajadas de 'in' consecutivas idênticas
+    // 8. Busca histórico (inclui as msgs que chegaram durante o debounce),
+    // remove marcadores internos ([Template X enviado]) que confundem a VictorIA,
+    // e deduplica rajadas de 'in' consecutivas idênticas.
     const historicoRaw = await getMensagens(lead.id, 20)
-    const historico = dedupConsecutiveIn(historicoRaw)
+    const historico = dedupConsecutiveIn(stripInternalMarkers(historicoRaw))
 
     // Usa a última mensagem 'in' como conteúdo efetivo (pode ser diferente da que
     // chegou neste request se o burst trouxe algo mais recente)
@@ -241,9 +346,11 @@ export async function POST(req: NextRequest) {
     const conteudoEfetivo = ultimaInNoHistorico?.conteudo ?? conteudo
 
     // 9. Processa com Claude (VictorIA)
+    // Passa o status atual pra Claude saber em qual fase do fluxo está
+    // (Fase 1 = INTERESSADO, Fase 2 = AGUARDANDO_APROVACAO, Fase 3 = COLETANDO_COMPLEMENTO).
     let resposta
     try {
-      resposta = await processarMensagem(conteudoEfetivo, historico, lead.nome)
+      resposta = await processarMensagem(conteudoEfetivo, historico, lead.nome, lead.status)
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err)
       const errStack = err instanceof Error ? err.stack : undefined
@@ -256,16 +363,23 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, erro: 'claude_error', detail: errMsg }, { status: 500 })
     }
 
-  // 10. Envia resposta ao lead
+  // 10. Envia resposta ao lead (se tiver mensagem pra enviar)
+  // VictorIA pode retornar mensagem vazia quando detecta atendimento automático
+  // — nesse caso só marcamos o lead e não desperdiçamos envio.
+  const autoDetected = resposta.motivo_humano === 'atendimento_automatico_detectado'
   const telefoneParaEnvio = lead.telefone
-  try {
-    await sendText(telefoneParaEnvio, resposta.mensagem, lead.evotalks_chat_id)
-  } catch (err) {
-    console.error('Erro ao enviar mensagem via Evo Talks:', err)
-  }
+  if (resposta.mensagem?.trim() && !autoDetected) {
+    try {
+      await sendText(telefoneParaEnvio, resposta.mensagem, lead.evotalks_chat_id)
+    } catch (err) {
+      console.error('Erro ao enviar mensagem via Evo Talks:', err)
+    }
 
-  // 11. Salva resposta no histórico
-  await saveMensagem(lead.id, 'out', resposta.mensagem)
+    // 11. Salva resposta no histórico
+    await saveMensagem(lead.id, 'out', resposta.mensagem)
+  } else if (autoDetected) {
+    console.log(`Lead ${lead.telefone}: atendimento automático detectado pela VictorIA, flag setado`)
+  }
 
   // 12. Atualiza status e chatId se ainda não tiver
   const updates: Record<string, unknown> = {
@@ -280,8 +394,22 @@ export async function POST(req: NextRequest) {
   if (clientId && !lead.evotalks_client_id) {
     updates.evotalks_client_id = clientId
   }
-  if (resposta.motivo_humano) {
-    updates.observacoes = resposta.motivo_humano
+
+  // Monta observações preservando flags importantes ([PAUSA_ATE:], [AUTO_DETECTED:])
+  // e sobrescrevendo o texto "solto" com o motivo mais recente.
+  if (resposta.motivo_humano || autoDetected) {
+    const pausaMatch = lead.observacoes?.match(/\[PAUSA_ATE:[^\]]+\]/)
+    const jaTemAutoFlag = lead.observacoes?.includes('[AUTO_DETECTED')
+    const partes: string[] = []
+    if (autoDetected && !jaTemAutoFlag) {
+      partes.push(`[AUTO_DETECTED:${new Date().toISOString()}]`)
+    } else if (jaTemAutoFlag) {
+      const m = lead.observacoes?.match(/\[AUTO_DETECTED[^\]]*\]/)
+      if (m) partes.push(m[0])
+    }
+    if (pausaMatch) partes.push(pausaMatch[0])
+    if (resposta.motivo_humano) partes.push(resposta.motivo_humano)
+    updates.observacoes = partes.join(' ').trim() || null
   }
 
   await supabaseAdmin.from('sdr_leads').update(updates).eq('id', lead.id)
@@ -297,7 +425,7 @@ export async function POST(req: NextRequest) {
   // 13. CRM — Criar oportunidade, mover etapa e preencher formulário
   let oppId: number | null = lead.evotalks_opportunity_id ? Number(lead.evotalks_opportunity_id) : null
   try {
-    if (!oppId && (resposta.novo_status === 'INTERESSADO' || resposta.novo_status === 'FORMULARIO_ENVIADO')) {
+    if (!oppId && (resposta.novo_status === 'INTERESSADO' || resposta.novo_status === 'AGUARDANDO_APROVACAO')) {
       // Sem oportunidade ainda — cria no pipeline AIVA (etapa Interessado)
       oppId = await createOpportunity({
         title: `${lead.nome} — AIVA`,
@@ -365,15 +493,18 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      if (resposta.novo_status === 'FORMULARIO_ENVIADO') {
+      // FASE 1 completa (7 dados) → move pra Pré Aprovação + envia Google Sheets
+      // Só dispara na TRANSIÇÃO (lead estava em outro status antes). Se já estava
+      // AGUARDANDO_APROVACAO e só mandou uma msg espontânea, não re-executa.
+      if (resposta.novo_status === 'AGUARDANDO_APROVACAO' && lead.status !== 'AGUARDANDO_APROVACAO') {
         await changeOpportunityStage(oppId, STAGES.PRE_APROVACAO)
-        await addOpportunityNote(oppId, `Dados de qualificação coletados pela VictorIA via WhatsApp.`)
+        await addOpportunityNote(oppId, `Qualificação inicial (7 dados) coletada pela VictorIA via WhatsApp. Aguardando análise AIVA.`)
         console.log(`CRM: Oportunidade #${oppId} → Pré Aprovação`)
 
-        // Envia dados completos para planilha Google Sheets
+        // Envia os 7 dados pra planilha Google Sheets direto daqui.
+        // (o trigger do Evo Talks pro stage 54 está desabilitado)
         const opp = await getOpportunity(oppId)
         const forms = (opp.formsdata ?? {}) as Record<string, string | null>
-        // Envia para HubSpot (UME/AIVA)
         const sheetsData = {
           nome_socio: forms['da6ddf70'],
           email_socio: forms['dafa40f0'],
@@ -391,6 +522,103 @@ export async function POST(req: NextRequest) {
           opportunity_id: String(oppId),
         }
         await sendToGoogleSheets(sheetsData)
+      }
+      // FASE 3 completa (12 dados) → envia HubSpot.
+      // Lead em CADASTRO_COMPLETO já retornou no passo 6, então se chegou aqui
+      // é transição de verdade (COLETANDO_COMPLEMENTO → CADASTRO_COMPLETO).
+      else if (resposta.novo_status === 'CADASTRO_COMPLETO') {
+        const opp = await getOpportunity(oppId)
+        const forms = (opp.formsdata ?? {}) as Record<string, string | null>
+
+        // Valida os 12 campos ANTES de disparar HubSpot — defesa contra erro
+        // da VictorIA marcando CADASTRO_COMPLETO prematuramente. Os 12 campos
+        // obrigatórios são os do formulário Qualificação Varejo do Evo Talks.
+        const camposObrigatorios = {
+          nome_socio: 'da6ddf70',
+          email_socio: 'dafa40f0',
+          telefone: 'db8569f0',
+          nome_varejo: 'dcacfa00',
+          cnpj_matriz: 'dd2ab580',
+          faturamento_anual: 'ddb960f0',
+          valor_boleto_mensal: 'de2cbc30',
+          regiao_varejo: 'dede58f0',
+          numero_lojas: 'df6f9c70',
+          localizacao_lojas: 'e0099280',
+          possui_outra_financeira: 'e07d62f0',
+          cnpjs_adicionais: 'e0f66380',
+        }
+        const faltantes = Object.entries(camposObrigatorios)
+          .filter(([, fieldId]) => !forms[fieldId]?.toString().trim())
+          .map(([label]) => label)
+
+        if (faltantes.length > 0) {
+          // Bloqueia HubSpot e alerta humanos — VictorIA marcou completo mas
+          // tá faltando dado. Reverte status pra COLETANDO_COMPLEMENTO pro
+          // lead continuar na Fase 3.
+          console.warn(`HubSpot bloqueado — opp #${oppId} incompleto: ${faltantes.join(', ')}`)
+          await addOpportunityNote(oppId, `⚠️ VictorIA marcou CADASTRO_COMPLETO mas faltam: ${faltantes.join(', ')}. HubSpot bloqueado. Status revertido pra COLETANDO_COMPLEMENTO.`)
+
+          await supabaseAdmin
+            .from('sdr_leads')
+            .update({ status: 'COLETANDO_COMPLEMENTO' })
+            .eq('id', lead.id)
+
+          const msg =
+            `⚠️ *${lead.nome}* (${lead.telefone}) — VictorIA marcou cadastro completo mas faltam dados: ${faltantes.join(', ')}.\n` +
+            `HubSpot bloqueado. Status revertido pra COLETANDO_COMPLEMENTO — VictorIA vai continuar coletando.`
+          await alertHuman(process.env.NEI_WHATSAPP!, msg)
+          await alertHuman(process.env.ALDO_WHATSAPP!, msg)
+
+          // Sobrescreve a resposta pra quem ler depois saber que não foi transição real
+          resposta.novo_status = 'COLETANDO_COMPLEMENTO'
+        } else {
+          await addOpportunityNote(oppId, `Cadastro completo (12 dados) coletado pela VictorIA. Enviado pro HubSpot.`)
+          console.log(`CRM: Oportunidade #${oppId} → Cadastro Completo → HubSpot`)
+          try {
+            await sendToHubSpot({
+              nome_socio: forms['da6ddf70'],
+              email_socio: forms['dafa40f0'],
+              telefone: forms['db8569f0'],
+              nome_varejo: forms['dcacfa00'],
+              cnpj_matriz: forms['dd2ab580'],
+              faturamento_anual: forms['ddb960f0'],
+              valor_boleto_mensal: forms['de2cbc30'],
+              regiao_varejo: forms['dede58f0'],
+              numero_lojas: forms['df6f9c70'],
+              localizacao_lojas: forms['e0099280'],
+              possui_outra_financeira: forms['e07d62f0'],
+              cnpjs_adicionais: forms['e0f66380'],
+            })
+          } catch (err) {
+            console.error(`Erro ao enviar pro HubSpot — opp #${oppId}:`, err)
+          }
+
+          // Complementa planilha AIVA APROVAÇÃO com os 5 campos da Fase 3
+          // (email, faturamento, valor_boleto_mensal, localizacao_lojas, cnpjs_adicionais).
+          // O Apps Script faz upsert por opportunity_id: se a linha já existe (foi
+          // criada na Fase 1), só preenche as células vazias — preserva o que já está
+          // lá. Se não existe, cria linha nova.
+          try {
+            await sendToGoogleSheets({
+              nome_socio: forms['da6ddf70'],
+              email_socio: forms['dafa40f0'],
+              telefone: forms['db8569f0'],
+              nome_varejo: forms['dcacfa00'],
+              cnpj_matriz: forms['dd2ab580'],
+              faturamento_anual: forms['ddb960f0'],
+              valor_boleto_mensal: forms['de2cbc30'],
+              regiao_varejo: forms['dede58f0'],
+              numero_lojas: forms['df6f9c70'],
+              localizacao_lojas: forms['e0099280'],
+              possui_outra_financeira: forms['e07d62f0'],
+              cnpjs_adicionais: forms['e0f66380'],
+              status: 'CADASTRO_COMPLETO',
+              opportunity_id: String(oppId),
+            })
+          } catch (err) {
+            console.error(`Erro ao complementar Google Sheets — opp #${oppId}:`, err)
+          }
+        }
       } else if (resposta.novo_status === 'NAO_QUALIFICADO') {
         await addOpportunityNote(oppId, `Lead não qualificado: ${resposta.motivo_humano ?? 'sem perfil'}`)
       }
@@ -399,14 +627,22 @@ export async function POST(req: NextRequest) {
     console.error('Erro ao atualizar CRM:', err)
   }
 
-  // 14. Alertas para humanos
-  if (resposta.novo_status === 'FORMULARIO_ENVIADO') {
+  // 14. Alertas para humanos — só disparam na TRANSIÇÃO de status, não em cada msg
+  if (resposta.novo_status === 'AGUARDANDO_APROVACAO' && lead.status !== 'AGUARDANDO_APROVACAO') {
     const msg =
-      `✅ *${lead.nome}* (${lead.telefone} — ${lead.cidade ?? 'cidade n/d'}) qualificado! Dados coletados pela VictorIA.\n` +
-      `Acompanhe no Evo Talks.`
+      `🟡 *${lead.nome}* (${lead.telefone} — ${lead.cidade ?? 'cidade n/d'}) qualificado p/ pré-aprovação.\n` +
+      `7 dados coletados pela VictorIA. Mover pra Cadastro Recebido no Evo Talks quando aprovar.`
     await alertHuman(process.env.NEI_WHATSAPP!, msg)
     await alertHuman(process.env.ALDO_WHATSAPP!, msg)
-  } else if (resposta.acionar_humano) {
+  } else if (resposta.novo_status === 'CADASTRO_COMPLETO') {
+    const msg =
+      `✅ *${lead.nome}* (${lead.telefone} — ${lead.cidade ?? 'cidade n/d'}) completou o cadastro!\n` +
+      `12 dados enviados pro HubSpot. Pronto pra mover pra Análise AIVA.`
+    await alertHuman(process.env.NEI_WHATSAPP!, msg)
+    await alertHuman(process.env.ALDO_WHATSAPP!, msg)
+  } else if (resposta.acionar_humano && !autoDetected) {
+    // Auto-detectado não alerta o Nei (seria spam a cada msg do bot do outro lado).
+    // O lead fica visível no filtro /?aguardando_humano=true do painel se ele quiser revisar.
     const msg =
       `🔔 *${lead.nome}* (${lead.telefone}) precisa de atendimento humano.\n` +
       `Motivo: ${resposta.motivo_humano ?? 'não especificado'}\n` +
