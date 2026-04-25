@@ -46,6 +46,25 @@ export default function LeadDrawer() {
   const [data, setData] = useState<{ lead: Lead; mensagens: Mensagem[] } | null>(null)
   const [busy, setBusy] = useState(false)
 
+  // Estado do painel de resposta manual
+  const [showReply, setShowReply] = useState(false)
+  const [replyText, setReplyText] = useState('')
+  const [replying, setReplying] = useState(false)
+
+  // Estado do painel de edição
+  const [showEdit, setShowEdit] = useState(false)
+  const [editNome, setEditNome] = useState('')
+  const [editCidade, setEditCidade] = useState('')
+  const [editObs, setEditObs] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  async function refreshDrawer() {
+    if (!leadId) return
+    const r = await fetch(`/api/leads/${leadId}/detail`)
+    const json = await r.json()
+    if (!json.error) setData(json)
+  }
+
   async function runAction(body: object, confirmMsg?: string) {
     if (!leadId) return
     if (confirmMsg && !window.confirm(confirmMsg)) return
@@ -71,6 +90,106 @@ export default function LeadDrawer() {
     }
   }
 
+  async function sendManualReply() {
+    if (!leadId || !replyText.trim()) return
+    setReplying(true)
+    try {
+      const res = await fetch(`/api/leads/${leadId}/action`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'send-manual', mensagem: replyText.trim() }),
+      })
+      const json = await res.json()
+      if (!res.ok) {
+        window.alert(`Erro: ${json.error ?? 'desconhecido'}`)
+        return
+      }
+      setReplyText('')
+      setShowReply(false)
+      await refreshDrawer()
+    } catch (err) {
+      window.alert(`Erro: ${err}`)
+    } finally {
+      setReplying(false)
+    }
+  }
+
+  async function runFollowupNow() {
+    if (!leadId) return
+    if (!window.confirm('Disparar follow-up agora? A VictorIA vai detectar se a janela 24h está aberta e mandar texto livre — caso contrário, dispara o template HSM de retomada.')) return
+    setBusy(true)
+    try {
+      const res = await fetch(`/api/leads/${leadId}/action`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'force-followup' }),
+      })
+      const json = await res.json()
+      if (!res.ok) {
+        window.alert(`Erro: ${json.error ?? 'desconhecido'}`)
+        return
+      }
+      // Feedback explícito do modo que rodou — operador precisa saber se foi
+      // texto livre (janela 24h aberta) ou template HSM (janela fechada)
+      if (json.modo === 'agendado') {
+        window.alert(`📅 Agendado\n\n${json.info ?? 'Follow-up agendado pro próximo cron'}`)
+      } else if (json.modo === 'contextual') {
+        window.alert(`💬 Texto livre enviado (janela 24h aberta)\n\n${json.mensagem ?? ''}`)
+      } else if (json.modo === 'hsm_retomada') {
+        window.alert(`📨 Template HSM "Follow Up Aiva" enviado (janela 24h fechada)\n\n${json.mensagem ?? ''}`)
+      }
+      await refreshDrawer()
+    } catch (err) {
+      window.alert(`Erro: ${err}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function openEditPanel() {
+    if (!data) return
+    // Tira o flag de pausa do textarea pra não confundir o usuário
+    // (ele é re-aplicado no save pelo backend)
+    const obsLimpa = (data.lead.observacoes ?? '').replace(/\s*\[PAUSA_ATE:[^\]]+\]/, '').trim()
+    setEditNome(data.lead.nome ?? '')
+    setEditCidade(data.lead.cidade ?? '')
+    setEditObs(obsLimpa)
+    setShowEdit(true)
+    setShowReply(false)
+  }
+
+  async function saveEdit() {
+    if (!leadId) return
+    if (!editNome.trim()) {
+      window.alert('Nome nao pode ficar vazio')
+      return
+    }
+    setSaving(true)
+    try {
+      const res = await fetch(`/api/leads/${leadId}/action`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'update-lead',
+          nome: editNome,
+          cidade: editCidade,
+          observacoes: editObs,
+        }),
+      })
+      const json = await res.json()
+      if (!res.ok) {
+        window.alert(`Erro: ${json.error ?? 'desconhecido'}`)
+        return
+      }
+      setShowEdit(false)
+      await refreshDrawer()
+    } catch (err) {
+      window.alert(`Erro: ${err}`)
+    } finally {
+      setSaving(false)
+    }
+  }
+
   useEffect(() => {
     const handler = (e: Event) => {
       const ce = e as CustomEvent<string>
@@ -90,6 +209,12 @@ export default function LeadDrawer() {
   useEffect(() => {
     if (!leadId) {
       setData(null)
+      setShowReply(false)
+      setReplyText('')
+      setShowEdit(false)
+      setEditNome('')
+      setEditCidade('')
+      setEditObs('')
       return
     }
     setLoading(true)
@@ -162,14 +287,35 @@ export default function LeadDrawer() {
           <>
             <div style={{ marginTop: '1rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
               <ActionBtn
-                disabled={busy}
+                disabled={busy || replying}
+                onClick={() => { setShowReply((v) => !v); setReplyText('') }}
+                color="#4ade80"
+              >
+                {showReply ? '✕ Cancelar' : '↩ Responder'}
+              </ActionBtn>
+              <ActionBtn
+                disabled={busy || replying}
+                onClick={() => runAction({ type: 'reprocess' }, 'Reprocessar a ultima mensagem com a VictorIA?')}
+                color="#60a5fa"
+              >
+                ↺ Reprocessar
+              </ActionBtn>
+              <ActionBtn
+                disabled={busy || replying || saving}
+                onClick={() => (showEdit ? setShowEdit(false) : openEditPanel())}
+                color="#fbbf24"
+              >
+                {showEdit ? '✕ Cancelar' : '✎ Editar'}
+              </ActionBtn>
+              <ActionBtn
+                disabled={busy || replying}
                 onClick={() => runAction({ type: 'pause', hours: 24 }, 'Pausar esse lead por 24h?')}
                 color="#a78bfa"
               >
                 ⏸ Pausar 24h
               </ActionBtn>
               <ActionBtn
-                disabled={busy}
+                disabled={busy || replying}
                 onClick={() => runAction({ type: 'pause', hours: 72 }, 'Pausar esse lead por 3 dias?')}
                 color="#a78bfa"
               >
@@ -177,7 +323,7 @@ export default function LeadDrawer() {
               </ActionBtn>
               {data.lead.observacoes?.includes('[PAUSA_ATE:') && (
                 <ActionBtn
-                  disabled={busy}
+                  disabled={busy || replying}
                   onClick={() => runAction({ type: 'unpause' })}
                   color="#4ade80"
                 >
@@ -185,29 +331,199 @@ export default function LeadDrawer() {
                 </ActionBtn>
               )}
               <ActionBtn
-                disabled={busy}
-                onClick={() => runAction({ type: 'force-followup' }, 'Agendar follow-up imediato?')}
+                disabled={busy || replying}
+                onClick={runFollowupNow}
                 color="#60a5fa"
               >
                 ⏩ Follow-up agora
               </ActionBtn>
               {data.lead.webhook_lock_at && (
                 <ActionBtn
-                  disabled={busy}
+                  disabled={busy || replying}
                   onClick={() => runAction({ type: 'unlock' })}
                   color="#f59e0b"
                 >
-                  🔓 Liberar lock
+                  Liberar lock
                 </ActionBtn>
               )}
               <ActionBtn
-                disabled={busy}
+                disabled={busy || replying}
                 onClick={() => runAction({ type: 'mark-descartado' }, 'Marcar esse lead como DESCARTADO?')}
                 color="#ef4444"
               >
                 ✖ Descartar
               </ActionBtn>
             </div>
+
+            {/* Botão de destaque: Aprovar loja (dispara HSM cadastro AIVA).
+                Posicionado APÓS as ações pequenas e separado por divisor pra
+                ficar bem longe do botão Fechar (evita clique acidental). */}
+            {data.lead.status !== 'FORMULARIO_ENVIADO' && (
+              <div
+                style={{
+                  marginTop: '1.25rem',
+                  paddingTop: '1.25rem',
+                  borderTop: '1px dashed #2a2a2a',
+                }}
+              >
+                <button
+                  onClick={() =>
+                    runAction(
+                      { type: 'approve' },
+                      'Aprovar essa loja? Vai disparar o template HSM com o link de cadastro AIVA + aviso CNPJ. O lead vai ficar como FORMULARIO_ENVIADO.'
+                    )
+                  }
+                  disabled={busy || replying}
+                  style={{
+                    width: '100%',
+                    background: 'linear-gradient(135deg, #16a34a, #22c55e)',
+                    border: 'none',
+                    color: '#fff',
+                    padding: '0.7rem 1rem',
+                    borderRadius: 8,
+                    cursor: busy || replying ? 'not-allowed' : 'pointer',
+                    fontFamily: 'inherit',
+                    fontSize: '0.9rem',
+                    fontWeight: 700,
+                    opacity: busy || replying ? 0.6 : 1,
+                    boxShadow: '0 0 0 1px #16a34a44',
+                  }}
+                >
+                  ✓ Aprovar loja — disparar link de cadastro AIVA
+                </button>
+              </div>
+            )}
+
+            {/* Painel de resposta manual */}
+            {showReply && (
+              <div
+                style={{
+                  marginTop: '0.75rem',
+                  display: 'flex',
+                  gap: '0.5rem',
+                  alignItems: 'flex-start',
+                  background: '#0d1a12',
+                  border: '1px solid #14532d',
+                  borderRadius: 8,
+                  padding: '0.75rem',
+                }}
+              >
+                <textarea
+                  value={replyText}
+                  onChange={(e) => setReplyText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) sendManualReply()
+                  }}
+                  placeholder="Digite a mensagem... (Ctrl+Enter para enviar)"
+                  rows={3}
+                  style={{
+                    flex: 1,
+                    background: '#0a0a0a',
+                    border: '1px solid #1e3a1e',
+                    color: '#eee',
+                    padding: '0.5rem 0.7rem',
+                    borderRadius: 6,
+                    fontFamily: 'inherit',
+                    fontSize: '0.85rem',
+                    resize: 'vertical',
+                  }}
+                />
+                <button
+                  onClick={sendManualReply}
+                  disabled={replying || !replyText.trim()}
+                  style={{
+                    background: replying ? '#111' : '#14532d',
+                    border: '1px solid #4ade80',
+                    color: '#4ade80',
+                    padding: '0.5rem 0.9rem',
+                    borderRadius: 6,
+                    cursor: replying || !replyText.trim() ? 'not-allowed' : 'pointer',
+                    fontFamily: 'inherit',
+                    fontSize: '0.82rem',
+                    fontWeight: 600,
+                    whiteSpace: 'nowrap',
+                    opacity: !replyText.trim() ? 0.5 : 1,
+                  }}
+                >
+                  {replying ? 'Enviando...' : 'Enviar'}
+                </button>
+              </div>
+            )}
+
+            {/* Painel de edição do lead */}
+            {showEdit && (
+              <div
+                style={{
+                  marginTop: '0.75rem',
+                  background: '#1a1208',
+                  border: '1px solid #78350f',
+                  borderRadius: 8,
+                  padding: '0.9rem',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '0.6rem',
+                }}
+              >
+                <div style={{ color: '#fbbf24', fontSize: '0.78rem', fontWeight: 600 }}>
+                  Editar dados do lead
+                </div>
+                <EditField
+                  label="Nome"
+                  value={editNome}
+                  onChange={setEditNome}
+                  placeholder="Nome da loja ou contato"
+                />
+                <EditField
+                  label="Cidade"
+                  value={editCidade}
+                  onChange={setEditCidade}
+                  placeholder="Curitiba/PR"
+                />
+                <EditField
+                  label="Observações"
+                  value={editObs}
+                  onChange={setEditObs}
+                  placeholder="Notas internas (a flag de pausa, se houver, é preservada automaticamente)"
+                  multiline
+                />
+                <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                  <button
+                    onClick={() => setShowEdit(false)}
+                    disabled={saving}
+                    style={{
+                      background: 'transparent',
+                      border: '1px solid #444',
+                      color: '#888',
+                      padding: '0.45rem 0.9rem',
+                      borderRadius: 6,
+                      cursor: saving ? 'not-allowed' : 'pointer',
+                      fontFamily: 'inherit',
+                      fontSize: '0.82rem',
+                    }}
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={saveEdit}
+                    disabled={saving || !editNome.trim()}
+                    style={{
+                      background: saving ? '#111' : '#78350f',
+                      border: '1px solid #fbbf24',
+                      color: '#fbbf24',
+                      padding: '0.45rem 1rem',
+                      borderRadius: 6,
+                      cursor: saving || !editNome.trim() ? 'not-allowed' : 'pointer',
+                      fontFamily: 'inherit',
+                      fontSize: '0.82rem',
+                      fontWeight: 600,
+                      opacity: !editNome.trim() ? 0.5 : 1,
+                    }}
+                  >
+                    {saving ? 'Salvando...' : 'Salvar'}
+                  </button>
+                </div>
+              </div>
+            )}
 
             <div style={{ marginTop: '1rem', fontSize: '0.85rem', lineHeight: 1.7 }}>
               <Row label="Telefone" value={data.lead.telefone} />
@@ -344,6 +660,67 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
     <div style={{ display: 'flex', borderBottom: '1px solid #151515', padding: '0.35rem 0' }}>
       <span style={{ width: 160, color: '#666' }}>{label}</span>
       <span style={{ flex: 1 }}>{value}</span>
+    </div>
+  )
+}
+
+function EditField({
+  label,
+  value,
+  onChange,
+  placeholder,
+  multiline,
+}: {
+  label: string
+  value: string
+  onChange: (v: string) => void
+  placeholder?: string
+  multiline?: boolean
+}) {
+  const inputStyle: React.CSSProperties = {
+    width: '100%',
+    background: '#0a0a0a',
+    border: '1px solid #3a2a10',
+    color: '#eee',
+    padding: '0.5rem 0.7rem',
+    borderRadius: 6,
+    fontFamily: 'inherit',
+    fontSize: '0.85rem',
+    boxSizing: 'border-box',
+    resize: multiline ? 'vertical' : undefined,
+  }
+  return (
+    <div>
+      <label
+        style={{
+          display: 'block',
+          color: '#a16207',
+          fontSize: '0.7rem',
+          textTransform: 'uppercase',
+          letterSpacing: '0.04em',
+          marginBottom: '0.25rem',
+          fontWeight: 600,
+        }}
+      >
+        {label}
+      </label>
+      {multiline ? (
+        <textarea
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          rows={3}
+          style={inputStyle}
+        />
+      ) : (
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          style={inputStyle}
+        />
+      )}
     </div>
   )
 }

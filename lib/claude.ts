@@ -108,6 +108,83 @@ function buildFaseInstrucao(statusAtual: string): string | null {
 }
 
 /**
+ * Gera o "miolo" curto pro template HSM de retomada (template 21 — Follow Up Aiva).
+ *
+ * Usado quando o operador clica "Follow-up agora" e a janela 24h do WhatsApp já
+ * fechou — texto livre falha, então a gente dispara o template HSM com {{1}}=nome
+ * e {{2}}=miolo gerado aqui contextualizado pela última conversa.
+ *
+ * Regras do miolo:
+ *  - até 100 caracteres
+ *  - sem cumprimento ("oi/olá")
+ *  - sem nome do lead (já vem em {{1}})
+ *  - sem assinatura
+ *  - tom natural, retoma o último ponto pendente
+ */
+export async function gerarMioloRetomada(
+  historico: Mensagem[],
+  nomeDoLead: string,
+): Promise<string> {
+  // Monta um resumo cronológico curto pra o Claude
+  const linhas = historico.slice(-12).map((m) => {
+    const quem = m.direcao === 'in' ? 'CLIENTE' : 'NOS'
+    const txt = m.conteudo.replace(/\s+/g, ' ').trim().slice(0, 280)
+    return `${quem}: ${txt}`
+  }).join('\n')
+
+  const systemPrompt = `Você está gerando o MIOLO de uma mensagem HSM do WhatsApp pra retomar uma conversa parada com um lojista da campanha AIVA (financiamento de celulares, taxa 12%, recebe em 2 dias úteis, sem risco de inadimplência, parcelamento até 12x).
+
+A estrutura final do template é:
+"Olá {{1}}, {{2}}"
+  {{1}} = nome do lojista (já preenchido)
+  {{2}} = MIOLO que você vai gerar
+
+REGRAS DO MIOLO:
+- Máximo 100 caracteres
+- Em português, tom natural e direto
+- NÃO comece com "oi", "olá", saudação ou nome (o {{1}} já cuida)
+- NÃO inclua assinatura ("Nei", "Track", etc.)
+- NÃO use emoji
+- Retome o último ponto pendente da conversa, sem repetir tudo
+- Termine com uma pergunta curta tipo "podemos continuar?" / "quer seguir?" / "consegue retornar?"
+- Se a conversa parou esperando o cliente preencher o cadastro CAF, mencione isso
+- Se a conversa parou esperando ele responder uma pergunta sua, retome a pergunta
+
+EXEMPLOS BONS:
+- "ainda dá pra fechar a ativação da AIVA nas suas 3 lojas. consegue retornar pra finalizarmos o cadastro?"
+- "ficou faltando só o CNPJ da filial pra eu seguir. consegue me passar pra continuarmos?"
+- "vi que você tinha começado o cadastro da CAF. quer que eu te ajude a finalizar?"
+
+RETORNE APENAS O TEXTO DO MIOLO. Sem aspas, sem JSON, sem comentários, sem prefixo. Só o texto puro.`
+
+  const userMessage = `Lojista: ${nomeDoLead}
+
+Conversa anterior (últimas mensagens, da mais antiga pra mais recente):
+${linhas || '(sem conversa anterior)'}
+
+Gere o miolo agora.`
+
+  const response = await getClient().messages.create({
+    model: 'claude-sonnet-4-5',
+    max_tokens: 200,
+    system: systemPrompt,
+    messages: [{ role: 'user', content: userMessage }],
+  })
+
+  const texto = response.content
+    .filter((b) => b.type === 'text')
+    .map((b) => (b as Anthropic.TextBlock).text)
+    .join('')
+    .trim()
+    // Remove aspas envolvendo, se vierem
+    .replace(/^["'`]+|["'`]+$/g, '')
+    .trim()
+
+  // Trava em 110 chars (margem de segurança — Meta rejeita se passar do limite)
+  return texto.slice(0, 110)
+}
+
+/**
  * Processa uma mensagem recebida do lead com histórico de conversa.
  * Retorna a resposta estruturada da VictorIA.
  */
