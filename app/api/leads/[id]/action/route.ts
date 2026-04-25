@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin, getMensagens, saveMensagem } from '@/lib/supabase'
 import { sendText, sendTemplate } from '@/lib/evotalks'
-import { processarMensagem, gerarMioloRetomada } from '@/lib/claude'
+import { processarMensagem, gerarMioloRetomada, extrairNomeRealDoHistorico } from '@/lib/claude'
 import { normalizaNome, APROVACAO_TEMPLATE_VAR, buildAvisoMatrizMsg } from '@/lib/text'
 
 type Action =
@@ -338,12 +338,26 @@ export async function POST(
       )
     }
 
-    const nomeNorm = normalizaNome(lead.nome)
-    const nomeBase = nomeNorm ?? 'lojista'
+    // Tenta extrair o nome REAL do cliente do histórico antes de cair no
+    // `lead.nome` cadastrado (que costuma ser o nome da loja, não da pessoa —
+    // 77% da base sofre disso). Se o histórico não der confiança, usa o
+    // fallback normalizado mesmo (comportamento anterior).
+    const nomeStored = normalizaNome(lead.nome) ?? 'lojista'
+    let nomeBase: string
+    try {
+      nomeBase = await extrairNomeRealDoHistorico(mensagens, nomeStored)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.warn(`[lead-action] force-followup extrairNomeReal falhou id=${id}: ${msg}`)
+      nomeBase = nomeStored
+    }
+    if (nomeBase !== nomeStored) {
+      console.log(`[lead-action] force-followup id=${id}: nome stored="${nomeStored}" → real="${nomeBase}"`)
+    }
 
     let miolo: string
     try {
-      miolo = await gerarMioloRetomada(mensagens, lead.nome ?? 'Lojista')
+      miolo = await gerarMioloRetomada(mensagens, nomeBase)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       console.error(`[lead-action] force-followup gerarMioloRetomada falhou id=${id}: ${msg}`)

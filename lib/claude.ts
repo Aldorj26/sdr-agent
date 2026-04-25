@@ -230,6 +230,76 @@ Gere o miolo agora.`
 }
 
 /**
+ * Lê o histórico e tenta extrair o PRIMEIRO NOME REAL do cliente (lojista) —
+ * útil quando o `lead.nome` cadastrado é o nome da loja em vez do nome da
+ * pessoa (ex: "Sos Celulares" → cliente real é "Ani"). 77% da base atual
+ * tem nome de loja no campo `nome`, então sem isso o template HSM sai como
+ * "Olá Sos Celulares, ..." quebrando rapport.
+ *
+ * Estratégia: Claude lê últimas 30 mensagens e devolve só o primeiro nome ou
+ * "DESCONHECIDO". Se incerto/erro, devolve `fallback` (preserva
+ * comportamento atual). Custo ~$0.001, latência ~500ms.
+ */
+export async function extrairNomeRealDoHistorico(
+  historico: Mensagem[],
+  fallback: string,
+): Promise<string> {
+  if (!historico?.length) return fallback
+
+  const trecho = historico
+    .slice(-30)
+    .map((m) => {
+      const quem = m.direcao === 'in' ? 'CLIENTE' : 'SDR'
+      const txt = m.conteudo.replace(/\s+/g, ' ').trim().slice(0, 280)
+      return `${quem}: ${txt}`
+    })
+    .join('\n')
+
+  const systemPrompt = `Você lê uma conversa entre um SDR (vendedor da Track/AIVA) e um CLIENTE (lojista de celular).
+
+Sua tarefa: retornar APENAS o primeiro nome próprio do CLIENTE (a pessoa, não a loja), em uma única palavra, sem pontuação.
+
+Regras:
+- O nome deve aparecer com clareza: cliente se identifica ("sou o João", "aqui é a Maria", "meu nome é Pedro"), OU o SDR já o chamou pelo nome em mensagens recebidas e o cliente não corrigiu.
+- IGNORE nomes de loja ("Sos Celulares", "AppleCel", "Smarting"), nomes do SDR ("VictorIA", "Aldo", "Nei", "Eduardo"), marcas ("AIVA", "UME", "Track"), e nomes de pessoas mencionadas que NÃO são o destinatário das mensagens.
+- Se houver QUALQUER dúvida, ou se nenhum nome aparecer com clareza, responda exatamente: DESCONHECIDO
+
+Responda só com o primeiro nome OU "DESCONHECIDO". Sem explicação, sem aspas, sem pontuação extra.`
+
+  let nome: string
+  try {
+    const response = await getClient().messages.create({
+      model: 'claude-sonnet-4-5',
+      max_tokens: 30,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: trecho }],
+    })
+
+    nome = response.content
+      .filter((b) => b.type === 'text')
+      .map((b) => (b as Anthropic.TextBlock).text)
+      .join('')
+      .trim()
+      .replace(/^[.,!?"'`*]+|[.,!?"'`*]+$/g, '')
+      .trim()
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[extrairNomeReal] Claude falhou (fallback="${fallback}"): ${msg}`)
+    return fallback
+  }
+
+  // Validações de sanidade — qualquer suspeita devolve fallback
+  if (!nome) return fallback
+  if (nome.toUpperCase() === 'DESCONHECIDO') return fallback
+  if (nome.length < 2 || nome.length > 30) return fallback
+  if (/\s/.test(nome)) return fallback              // múltiplas palavras = Claude desobedeceu
+  if (!/^[\p{L}'-]+$/u.test(nome)) return fallback  // só letras (acentos OK), hífen, apóstrofe
+
+  // Capitaliza: "ani" → "Ani", "JOÃO" → "João"
+  return nome[0].toUpperCase() + nome.slice(1).toLowerCase()
+}
+
+/**
  * Processa uma mensagem recebida do lead com histórico de conversa.
  * Retorna a resposta estruturada da VictorIA.
  */
