@@ -25,14 +25,17 @@ async function getRecentLeads(
   pausados?: string,
   followupHoje?: string,
   lockTravado?: string,
+  disparoDia?: string,
 ) {
-  const temFiltro = Boolean(q || status || importante || aguardandoHumano || pausados || followupHoje || lockTravado)
+  const temFiltro = Boolean(
+    q || status || importante || aguardandoHumano || pausados || followupHoje || lockTravado || disparoDia,
+  )
 
   let query = supabaseAdmin
     .from('sdr_leads')
     .select('id, nome, telefone, cidade, status, data_ultimo_contato, importante')
     .order('data_ultimo_contato', { ascending: false, nullsFirst: false })
-    .limit(temFiltro ? 100 : 10)
+    .limit(temFiltro ? 500 : 10)
 
   if (status) query = query.eq('status', status)
   if (importante === 'true') query = query.eq('importante', true)
@@ -60,6 +63,15 @@ async function getRecentLeads(
     query = query
       .not('webhook_lock_at', 'is', null)
       .lt('webhook_lock_at', umMinutoAtras)
+  }
+
+  // Filtro por dia de disparo (formato YYYY-MM-DD em BRT, vem do /campanhas)
+  if (disparoDia && /^\d{4}-\d{2}-\d{2}$/.test(disparoDia)) {
+    const startBrt = new Date(`${disparoDia}T00:00:00-03:00`)
+    const endBrt = new Date(startBrt.getTime() + 24 * 60 * 60 * 1000)
+    query = query
+      .gte('data_disparo_inicial', startBrt.toISOString())
+      .lt('data_disparo_inicial', endBrt.toISOString())
   }
 
   if (q && q.trim()) {
@@ -303,6 +315,7 @@ export default async function Page({
     pausados?: string
     followup_hoje?: string
     lock_travado?: string
+    disparo_dia?: string
   }>
 }) {
   const sp = await searchParams
@@ -316,6 +329,7 @@ export default async function Page({
       sp.pausados,
       sp.followup_hoje,
       sp.lock_travado,
+      sp.disparo_dia,
     ),
     getAgora(),
     getTimeline(),
@@ -324,7 +338,14 @@ export default async function Page({
     getMensagensPorDia(),
   ])
   const filtroAtivo = Boolean(
-    sp.q || sp.status || sp.importante || sp.aguardando_humano || sp.pausados || sp.followup_hoje || sp.lock_travado,
+    sp.q ||
+      sp.status ||
+      sp.importante ||
+      sp.aguardando_humano ||
+      sp.pausados ||
+      sp.followup_hoje ||
+      sp.lock_travado ||
+      sp.disparo_dia,
   )
   const total = metricas.reduce((s: number, m: { total: number }) => s + Number(m.total), 0)
 
@@ -382,6 +403,22 @@ export default async function Page({
               Track Tecnologia · VictorIA · {new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}
             </p>
           </div>
+          <Link
+            href="/campanhas"
+            style={{
+              background: 'transparent',
+              color: 'var(--text-muted)',
+              textDecoration: 'none',
+              padding: '0.55rem 0.9rem',
+              border: '1px solid var(--border)',
+              borderRadius: 8,
+              fontSize: '0.85rem',
+              fontWeight: 600,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            📊 Campanhas
+          </Link>
           <Link
             href="/campanha"
             style={{
@@ -476,6 +513,48 @@ export default async function Page({
         })}
       </div>
 
+      {/* ─── Leads / Busca ────────────────────────────────────────────── */}
+      <div className="section-header">
+        <h2 style={{ margin: 0 }}>
+          {sp.disparo_dia
+            ? `Lote de ${sp.disparo_dia.split('-').reverse().join('/')} (${leads.length})`
+            : filtroAtivo
+              ? `Leads encontrados (${leads.length})`
+              : 'Últimas interações'}
+        </h2>
+        <span className="section-sub">total: {total}</span>
+      </div>
+      <SearchBar />
+      <table className="tbl">
+        <thead>
+          <tr>
+            <th>Nome</th>
+            <th>Telefone</th>
+            <th>Cidade</th>
+            <th>Status</th>
+            <th>Último contato</th>
+          </tr>
+        </thead>
+        <tbody>
+          {leads.map((l: { id: string; nome: string; telefone: string; cidade: string | null; status: string; data_ultimo_contato: string | null; importante: boolean }) => (
+            <ClickableRow key={l.telefone} leadId={l.id}>
+              <td>
+                {l.importante && <span style={{ color: '#f59e0b', marginRight: 4 }} title="Importante (3+ lojas)">★</span>}
+                {l.nome}
+              </td>
+              <td style={{ color: 'var(--text-dim)' }}>{l.telefone}</td>
+              <td style={{ color: 'var(--text-dim)' }}>{l.cidade ?? '—'}</td>
+              <td><StatusPill status={l.status} /></td>
+              <td style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>
+                {l.data_ultimo_contato
+                  ? new Date(l.data_ultimo_contato).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })
+                  : '—'}
+              </td>
+            </ClickableRow>
+          ))}
+        </tbody>
+      </table>
+
       {/* ─── Timeline + Agenda (lado a lado) ──────────────────────────── */}
       <div className="grid-2">
         <div>
@@ -557,44 +636,6 @@ export default async function Page({
           )}
         </div>
       </div>
-
-      {/* ─── Leads / Busca ────────────────────────────────────────────── */}
-      <div className="section-header">
-        <h2 style={{ margin: 0 }}>
-          {filtroAtivo ? `Leads encontrados (${leads.length})` : 'Últimas interações'}
-        </h2>
-        <span className="section-sub">total: {total}</span>
-      </div>
-      <SearchBar />
-      <table className="tbl">
-        <thead>
-          <tr>
-            <th>Nome</th>
-            <th>Telefone</th>
-            <th>Cidade</th>
-            <th>Status</th>
-            <th>Último contato</th>
-          </tr>
-        </thead>
-        <tbody>
-          {leads.map((l: { id: string; nome: string; telefone: string; cidade: string | null; status: string; data_ultimo_contato: string | null; importante: boolean }) => (
-            <ClickableRow key={l.telefone} leadId={l.id}>
-              <td>
-                {l.importante && <span style={{ color: '#f59e0b', marginRight: 4 }} title="Importante (3+ lojas)">★</span>}
-                {l.nome}
-              </td>
-              <td style={{ color: 'var(--text-dim)' }}>{l.telefone}</td>
-              <td style={{ color: 'var(--text-dim)' }}>{l.cidade ?? '—'}</td>
-              <td><StatusPill status={l.status} /></td>
-              <td style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>
-                {l.data_ultimo_contato
-                  ? new Date(l.data_ultimo_contato).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })
-                  : '—'}
-              </td>
-            </ClickableRow>
-          ))}
-        </tbody>
-      </table>
 
       {/* ─── Saúde do sistema ─────────────────────────────────────────── */}
       <h2>Saúde do sistema</h2>
