@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getOpportunity, sendToHubSpot, sendToGoogleSheets, sendTemplate, sendText, STAGES } from '@/lib/evotalks'
+import { alertHuman, getOpportunity, sendToGoogleSheets, sendTemplate, sendText, STAGES } from '@/lib/evotalks'
 import { supabaseAdmin } from '@/lib/supabase'
+import { normalizaNome, APROVACAO_TEMPLATE_VAR, buildAvisoMatrizMsg } from '@/lib/text'
 
 /**
  * Webhook chamado pelo Evo Talks quando uma oportunidade muda de etapa.
@@ -57,38 +58,102 @@ export async function POST(req: NextRequest) {
 
   const stageNum = Number(destStageId)
 
-  // Stage 49 — Cadastro Recebido → HubSpot
+  // Stage 49 — Cadastro Recebido (manual) → dispara HSM "Complete o Cadastro".
+  //
+  // Fluxo: operador/Eduardo aprovou a pré-análise e move manualmente o card de
+  // Pré Aprovação (54) → Cadastro Recebido (49). Isso reabre a janela WhatsApp
+  // via HSM template 20 e muda o status do lead pra COLETANDO_COMPLEMENTO, pra
+  // VictorIA retomar a conversa e coletar os 5 dados restantes.
+  //
+  // OBS: o HubSpot NÃO é mais disparado aqui — agora é disparado só quando a
+  // VictorIA completa a Fase 3 (12 dados) no /api/sdr/webhook.
   if (stageNum === STAGES.CADASTRO_RECEBIDO) {
     try {
       const opp = await getOpportunity(Number(opportunityId))
       const forms = (opp.formsdata ?? {}) as Record<string, string | null>
+      const telefone = (opp.mainphone ?? forms['db8569f0'] ?? '').toString().replace(/\D/g, '')
 
-      await sendToHubSpot({
-        nome_socio: forms['da6ddf70'],
-        email_socio: forms['dafa40f0'],
-        telefone: forms['db8569f0'],
-        nome_varejo: forms['dcacfa00'],
-        cnpj_matriz: forms['dd2ab580'],
-        faturamento_anual: forms['ddb960f0'],
-        valor_boleto_mensal: forms['de2cbc30'],
-        regiao_varejo: forms['dede58f0'],
-        numero_lojas: forms['df6f9c70'],
-        localizacao_lojas: forms['e0099280'],
-        possui_outra_financeira: forms['e07d62f0'],
-        cnpjs_adicionais: forms['e0f66380'],
+      if (!telefone) {
+        console.error(`Opp #${opportunityId}: telefone não encontrado pra template Complete o Cadastro`)
+        return NextResponse.json({ ok: false, erro: 'telefone_nao_encontrado' }, { status: 400 })
+      }
+
+      // Busca o lead no Supabase pra pegar nome + id
+      const { data: lead } = await supabaseAdmin
+        .from('sdr_leads')
+        .select('id, nome')
+        .eq('telefone', telefone)
+        .maybeSingle()
+
+      const nomeSocio = normalizaNome(forms['da6ddf70']) || normalizaNome(lead?.nome ?? null) || 'Lojista'
+
+      // Template HSM "Complete o Cadastro" (id 20)
+      // {{1}} = nome do sócio
+      // {{2}} = texto (usa valor padrão do Evo Talks)
+      const templateId = Number(process.env.AIVA_COMPLETE_CADASTRO_TEMPLATE_ID ?? 0)
+      if (!templateId) {
+        console.warn(`AIVA_COMPLETE_CADASTRO_TEMPLATE_ID não configurado — template Complete o Cadastro não enviado (opp #${opportunityId})`)
+        return NextResponse.json({
+          ok: false,
+          erro: 'template_complete_cadastro_nao_configurado',
+        })
+      }
+
+      const textoPadrao = 'sua loja foi pré-aprovada pela AIVA! 🎉'
+      await sendTemplate(telefone, templateId, [nomeSocio, textoPadrao])
+
+      // Muda status do lead pra COLETANDO_COMPLEMENTO (se o lead existir no Supabase)
+      if (lead?.id) {
+        await supabaseAdmin
+          .from('sdr_leads')
+          .update({
+            status: 'COLETANDO_COMPLEMENTO',
+            data_ultimo_contato: new Date().toISOString(),
+          })
+          .eq('id', lead.id)
+
+        await supabaseAdmin.from('sdr_mensagens').insert({
+          lead_id: lead.id,
+          direcao: 'out',
+          conteudo: `[Template Complete o Cadastro enviado — ${nomeSocio}]`,
+          template_hsm: 'aiva_complete_cadastro',
+        })
+      }
+
+      // Alerta Aldo + Nei de que a oportunidade foi aprovada internamente e
+      // a VictorIA vai começar a Fase 3 (coleta dos 5 dados complementares).
+      try {
+        const msg =
+          `🟢 *${lead?.nome ?? nomeSocio}* (${telefone}) movido pra Cadastro Recebido.\n` +
+          `HSM 20 disparado — VictorIA vai coletar os 5 dados restantes (email, faturamento, valor boleto, localização, CNPJs adicionais).`
+        if (process.env.NEI_WHATSAPP) await alertHuman(process.env.NEI_WHATSAPP, msg)
+        if (process.env.ALDO_WHATSAPP) await alertHuman(process.env.ALDO_WHATSAPP, msg)
+      } catch (err) {
+        console.error('Falha ao alertar humanos sobre stage 49:', err)
+      }
+
+      console.log(`Template Complete o Cadastro enviado: opp #${opportunityId} → ${telefone}, status → COLETANDO_COMPLEMENTO`)
+      return NextResponse.json({
+        ok: true,
+        template_enviado: true,
+        status_atualizado: 'COLETANDO_COMPLEMENTO',
       })
-
-      console.log(`HubSpot: dados enviados para oportunidade #${opportunityId}`)
-      return NextResponse.json({ ok: true, hubspot: true })
     } catch (err) {
-      console.error('Erro ao enviar para HubSpot:', err)
-      return NextResponse.json({ ok: false, erro: 'hubspot_error' }, { status: 500 })
+      console.error('Erro ao disparar template Complete o Cadastro:', err)
+      return NextResponse.json({ ok: false, erro: 'template_error' }, { status: 500 })
     }
   }
 
   // Stage 54 — Pré Aprovação → envia dados pra planilha AIVA APROVAÇÃO
+  //
   // Usado quando o time preenche manualmente os dados no CRM a partir de um
   // lead INTERESSADO e move pra Pré Aprovação (fluxo manual, sem passar pelo chat).
+  //
+  // ATENÇÃO: o trigger desse webhook no Evo Talks foi DESABILITADO pelo Gustavo,
+  // então este handler está dormente — só roda se o trigger for reativado.
+  // O envio principal pra planilha (quando a VictorIA qualifica via chat) é
+  // feito DIRETAMENTE no /api/sdr/webhook. Se reativar o trigger aqui, REMOVA
+  // a chamada direta de lá pra evitar duplicação na planilha.
   if (stageNum === STAGES.PRE_APROVACAO) {
     try {
       const opp = await getOpportunity(Number(opportunityId))
@@ -174,22 +239,11 @@ export async function POST(req: NextRequest) {
       // Corpo do template:
       //   Bem vindo{{1}}
       //   Assim que finalizar, retorne aqui.
-      const varTemplate =
-        ', sua loja foi aprovada pela Aiva! Preencha esse seu cadastro atraves do link ' +
-        'https://retail-onboarding-hub.vercel.app/onboarding/full'
-      await sendTemplate(telefone, templateId, [varTemplate])
+      await sendTemplate(telefone, templateId, [APROVACAO_TEMPLATE_VAR])
 
       // Aviso complementar sobre CNPJ matriz/filial (não está no template HSM).
       // Enviado como texto livre — janela de 24h já foi aberta pelo template acima.
-      const saudacao = nomeContato ? `${nomeContato}, uma` : 'Olá! Uma'
-      const avisoMatrizMsg =
-        `${saudacao} dica rápida pra agilizar seu cadastro:\n\n` +
-        `Quantas lojas você vai cadastrar na AIVA?\n\n` +
-        `*Se for só 1 loja*: pode seguir direto no link, é um cadastro só.\n\n` +
-        `*Se forem 2 ou mais*: preciso saber se elas têm CNPJs totalmente diferentes (são matrizes independentes) ou se são filiais da mesma empresa (mesmo CNPJ com finais diferentes tipo 0001, 0002).\n\n` +
-        `- *Matrizes diferentes*: um cadastro para cada CNPJ raiz\n` +
-        `- *Filiais do mesmo CNPJ*: um cadastro só cobre todas\n\n` +
-        `Me conta aqui quantas lojas você tem antes de começar, que eu te oriento no caminho certo. Assim evitamos retrabalho.`
+      const avisoMatrizMsg = buildAvisoMatrizMsg(nomeContato)
 
       try {
         await sendText(telefone, avisoMatrizMsg)
@@ -229,36 +283,4 @@ export async function POST(req: NextRequest) {
   }
 
   return NextResponse.json({ ok: true, ignorado: `stage ${destStageId} sem ação configurada` })
-}
-
-/**
- * Normaliza o nome do sócio:
- * - Pega só o primeiro nome
- * - Capitaliza a primeira letra, resto minúsculas
- * - Retorna null se for inválido (vazio, curto, só numeros, repetido, palavra de teste)
- */
-function normalizaNome(raw: string): string | null {
-  if (!raw) return null
-  const trimmed = raw.trim()
-  if (trimmed.length < 2) return null
-
-  // Pega só o primeiro "token" (primeiro nome)
-  const primeiro = trimmed.split(/\s+/)[0]
-  if (!primeiro || primeiro.length < 2) return null
-
-  // Rejeita se for só números
-  if (/^\d+$/.test(primeiro)) return null
-
-  // Rejeita se todas as letras forem iguais (ex: "aaaa", "xxxx")
-  if (/^(.)\1+$/i.test(primeiro)) return null
-
-  // Rejeita palavras comuns de teste/genéricas
-  const invalidos = new Set([
-    'teste', 'test', 'asdf', 'qwerty', 'lojista', 'loja',
-    'xxx', 'aaa', 'nome', 'cliente', 'usuario', 'varejo',
-  ])
-  if (invalidos.has(primeiro.toLowerCase())) return null
-
-  // Capitaliza: primeira letra maiúscula, resto minúsculas
-  return primeiro.charAt(0).toUpperCase() + primeiro.slice(1).toLowerCase()
 }
