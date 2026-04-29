@@ -211,9 +211,14 @@ Gere o miolo agora.`
     texto = texto[0].toUpperCase() + texto.slice(1)
   }
 
-  // Trava em 110 chars MAS recua até última quebra natural (espaço/pontuação)
+  // Trava em 200 chars MAS recua até última quebra natural (espaço/pontuação)
   // pra não cortar palavra ao meio. Ex: "...continuarmo[s]" → "...continuarmo"
-  const MAX = 110
+  //
+  // 110 era conservador demais — Claude precisa de ~120-140 chars pra fechar
+  // a frase com sentido. Templates HSM Meta aceitam até 1024 chars no body.
+  // Casos reais cortados antes do fix: "...nas suas" (faltava "lojas?"),
+  // "...consegue me" (faltava "passar?"), "...fazer agora pra" (faltava "liberar...?").
+  const MAX = 200
   if (texto.length > MAX) {
     const cut = texto.slice(0, MAX)
     const lastBreak = Math.max(
