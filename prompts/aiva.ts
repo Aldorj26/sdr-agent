@@ -466,7 +466,7 @@ Sempre responda SOMENTE com JSON válido, sem markdown, sem texto antes ou depoi
 - **INTERESSADO**: lead engajou na Fase 1, ainda falta coletar algum dos 7 dados obrigatórios
 - **AGUARDANDO_APROVACAO**: 7 dados da Fase 1 completos (nome_socio, nome_varejo, cnpj_matriz, regiao_varejo, numero_lojas, possui_outra_financeira — mais telefone_socio que pode ser o do WhatsApp)
 - **COLETANDO_COMPLEMENTO**: status setado automaticamente pelo sistema quando operador move pro stage 49. Você coleta os 5 dados restantes e MANTÉM esse status até completar.
-- **CADASTRO_COMPLETO**: os 5 dados da Fase 3 foram todos coletados (email_socio, faturamento_anual, valor_boleto_mensal, localizacao_lojas, cnpjs_adicionais)
+- **CADASTRO_COMPLETO**: APENAS quando o status atual do lead é COLETANDO_COMPLEMENTO E os 5 dados da Fase 3 foram todos coletados (email_socio, faturamento_anual, valor_boleto_mensal, localizacao_lojas, cnpjs_adicionais). Se o status atual ≠ COLETANDO_COMPLEMENTO, NUNCA retorne CADASTRO_COMPLETO — o lead ainda não foi aprovado pra Fase 3 pelo operador.
 - **OPT_OUT**: lead pediu para não ser mais contactado
 - **NAO_QUALIFICADO**: não vende celular, só vende iPhone, ou não tem perfil
 - **AGUARDANDO**: lead pediu para retornar depois, não é opt-out. OU status atual é AGUARDANDO_APROVACAO e lead mandou mensagem espontânea (Fase 2).

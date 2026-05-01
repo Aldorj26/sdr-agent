@@ -105,6 +105,9 @@ function buildFaseInstrucao(statusAtual: string): string | null {
   if (statusAtual === 'AGUARDANDO_APROVACAO') {
     return `[INSTRUÇÃO DO SISTEMA]\nStatus do lead = AGUARDANDO_APROVACAO. Você está na FASE 2.\nResponda neutro tipo "Estamos analisando, em breve retorno". NÃO peça dados novos.\nRetorne novo_status = "AGUARDANDO_APROVACAO" e acionar_humano = false.\n[FIM INSTRUÇÃO DO SISTEMA]`
   }
+  if (statusAtual === 'INTERESSADO' || statusAtual === 'DISPARO_REALIZADO' || statusAtual === 'SEM_RESPOSTA') {
+    return `[INSTRUÇÃO DO SISTEMA — NÃO IGNORAR]\nStatus do lead = ${statusAtual}. Você está na FASE 1.\nNUNCA retorne "CADASTRO_COMPLETO" — esse status é da Fase 3 e o lead ainda não foi aprovado pra avançar.\nNUNCA retorne "COLETANDO_COMPLEMENTO" — esse status é setado pelo sistema quando o operador move o card no CRM, não por você.\nVocê só pode retornar: "INTERESSADO" (ainda coletando os 7 dados da Fase 1) ou "AGUARDANDO_APROVACAO" (quando os 7 dados estiverem completos: nome_socio, telefone_socio, nome_varejo, cnpj_matriz, regiao_varejo, numero_lojas, possui_outra_financeira).\nOutros retornos válidos só pra desqualificação: OPT_OUT, NAO_QUALIFICADO, AGUARDANDO, BOT_DETECTADO.\n[FIM INSTRUÇÃO DO SISTEMA]`
+  }
   return null
 }
 

@@ -389,6 +389,32 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, erro: 'claude_error', detail: errMsg }, { status: 500 })
     }
 
+  // 9b. Defesa em profundidade — bloqueia transição CADASTRO_COMPLETO indevida.
+  // VictorIA só pode marcar CADASTRO_COMPLETO quando o lead JÁ ESTÁ em
+  // COLETANDO_COMPLEMENTO (Fase 3 ativada pelo operador via stage CADASTRO_RECEBIDO).
+  // Se a IA tentar pular direto da Fase 1 (INTERESSADO) ou Fase 2 pra CADASTRO_COMPLETO,
+  // reescreve a mensagem e mantém o status atual antes de enviar qualquer coisa pro lead.
+  if (
+    resposta.novo_status === 'CADASTRO_COMPLETO' &&
+    lead.status !== 'COLETANDO_COMPLEMENTO'
+  ) {
+    console.warn(
+      `[guard] Lead ${lead.telefone}: VictorIA tentou CADASTRO_COMPLETO com status atual = ${lead.status}. Bloqueado.`,
+    )
+    // Fallback seguro: mantém lead na Fase 1 (INTERESSADO). Se já estava em
+    // AGUARDANDO_APROVACAO ou outro estado válido pra IA, preserva.
+    const STATUS_VALIDOS_IA = ['INTERESSADO', 'AGUARDANDO', 'AGUARDANDO_APROVACAO', 'COLETANDO_COMPLEMENTO']
+    resposta.novo_status = (STATUS_VALIDOS_IA.includes(lead.status) ? lead.status : 'INTERESSADO') as typeof resposta.novo_status
+    resposta.mensagem = 'Posso te tirar mais alguma dúvida sobre como a AIVA funciona?'
+    try {
+      const msg = `⚠️ *${lead.nome}* (${lead.telefone}) — VictorIA tentou pular direto pra CADASTRO_COMPLETO sem passar pela Fase 1/2 (status atual: ${lead.status}). Mensagem reescrita e status mantido.`
+      if (process.env.NEI_WHATSAPP) await alertHuman(process.env.NEI_WHATSAPP, msg)
+      if (process.env.ALDO_WHATSAPP) await alertHuman(process.env.ALDO_WHATSAPP, msg)
+    } catch (err) {
+      console.error('[guard] falha ao alertar humanos:', err)
+    }
+  }
+
   // 10. Envia resposta ao lead (se tiver mensagem pra enviar)
   // VictorIA pode retornar mensagem vazia quando detecta atendimento automático
   // — nesse caso só marcamos o lead e não desperdiçamos envio.
