@@ -75,45 +75,78 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
   }
 
-  const payload = await req.json()
+  // Parse JSON com guarda — payload malformado nunca passa pra logica abaixo.
+  let payload: Record<string, unknown>
+  try {
+    const parsed = await req.json()
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return NextResponse.json({ error: 'payload deve ser objeto JSON' }, { status: 400 })
+    }
+    payload = parsed as Record<string, unknown>
+  } catch {
+    return NextResponse.json({ error: 'JSON inválido' }, { status: 400 })
+  }
 
   // DEBUG: Log payload completo para mapear formato do Evo Talks
   console.log('WEBHOOK PAYLOAD:', JSON.stringify(payload).substring(0, 2000))
 
+  // Helpers seguros pra extrair campos de objetos aninhados sem crashar
+  // quando algum nivel é null/undefined ou tipo errado.
+  const asObj = (v: unknown): Record<string, unknown> | null =>
+    v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null
+  const asStr = (v: unknown): string => (typeof v === 'string' ? v : v == null ? '' : String(v))
+  const asNum = (v: unknown): number => {
+    const n = typeof v === 'number' ? v : Number(v)
+    return Number.isFinite(n) ? n : 0
+  }
+  const asBool = (v: unknown): boolean => v === true || v === 'true'
+
   // 2. Extrai dados do payload Evo Talks (msgreceivedhook)
   // O payload pode vir em diferentes formatos dependendo da configuração do hook
-  const message = payload.message ?? payload.data?.message ?? payload
-  const direction = message.direction ?? payload.direction ?? 'in'
-  const text: string = message.text ?? message.conversation ?? ''
-  const chatId: string = String(message.chatId ?? payload.chatId ?? '')
-  const clientId: string = String(message.clientId ?? payload.clientId ?? '')
-  const queueId: number = Number(message.queueId ?? payload.queueId ?? 0)
+  const payloadMessageObj = asObj(payload.message)
+  const payloadDataObj = asObj(payload.data)
+  const dataMessageObj = payloadDataObj ? asObj(payloadDataObj.message) : null
+  const message = payloadMessageObj ?? dataMessageObj ?? payload
+  const direction = asStr((message as Record<string, unknown>).direction ?? payload.direction ?? 'in')
+  const text: string = asStr((message as Record<string, unknown>).text ?? (message as Record<string, unknown>).conversation ?? '')
+  const chatId: string = asStr((message as Record<string, unknown>).chatId ?? payload.chatId ?? '')
+  const clientId: string = asStr((message as Record<string, unknown>).clientId ?? payload.clientId ?? '')
+  const queueId: number = asNum((message as Record<string, unknown>).queueId ?? payload.queueId ?? 0)
   // mId = WhatsApp messageid (wamid.HBg...) — único por mensagem real do lead.
   // Usado pra idempotência: se Evo Talks reentregar o mesmo webhook, ignoramos.
-  const mId: string = String(message.mId ?? payload.mId ?? '')
+  const mId: string = asStr((message as Record<string, unknown>).mId ?? payload.mId ?? '')
 
   // Extrai dados de áudio/arquivo (se houver)
   // fileId pode vir em diferentes lugares dependendo do formato do payload
-  const fileId: number | null =
-    message.fileId ?? message.fk_file ?? message.file?.fileId ?? message.file?.fkFile ??
-    payload.message?.fileId ?? payload.message?.fk_file ?? payload.message?.file?.fkFile ??
-    payload.fileId ?? payload.fk_file ?? payload.file?.fkFile ?? null
-  const mimeType: string =
-    message.mimeType ?? message.file_mimetype ?? message.file?.mimeType ??
-    payload.message?.mimeType ?? payload.message?.file_mimetype ??
-    payload.mimeType ?? ''
-  const isAudio = fileId && fileId > 0 && (
+  const messageObj = message as Record<string, unknown>
+  const messageFileObj = asObj(messageObj.file)
+  const payloadMessageFileObj = payloadMessageObj ? asObj(payloadMessageObj.file) : null
+  const payloadFileObj = asObj(payload.file)
+
+  const fileIdRaw =
+    messageObj.fileId ?? messageObj.fk_file ?? messageFileObj?.fileId ?? messageFileObj?.fkFile ??
+    payloadMessageObj?.fileId ?? payloadMessageObj?.fk_file ?? payloadMessageFileObj?.fkFile ??
+    payload.fileId ?? payload.fk_file ?? payloadFileObj?.fkFile ?? null
+  const fileId: number | null = fileIdRaw == null ? null : asNum(fileIdRaw) || null
+
+  const mimeType: string = asStr(
+    messageObj.mimeType ?? messageObj.file_mimetype ?? messageFileObj?.mimeType ??
+    payloadMessageObj?.mimeType ?? payloadMessageObj?.file_mimetype ??
+    payload.mimeType ?? '',
+  )
+  const isAudio = !!fileId && fileId > 0 && (
     mimeType.startsWith('audio/') ||
     mimeType === 'application/ogg' ||
     mimeType.includes('opus')
   )
 
   // Também suporta formato antigo (Evo Talks v1 - remoteJid)
-  const remoteJid: string = payload?.data?.key?.remoteJid ?? ''
-  const fromMe: boolean = payload?.data?.key?.fromMe ?? false
-  const legacyText: string = payload?.data?.message?.conversation ?? ''
+  const dataKeyObj = payloadDataObj ? asObj(payloadDataObj.key) : null
+  const remoteJid: string = asStr(dataKeyObj?.remoteJid ?? '')
+  const fromMe: boolean = asBool(dataKeyObj?.fromMe ?? false)
+  const legacyText: string = asStr(dataMessageObj?.conversation ?? '')
   // Áudio no formato legado (v1)
-  const legacyAudio = payload?.data?.message?.audioMessage ?? null
+  const legacyAudio = dataMessageObj?.audioMessage ?? null
 
   console.log(`Webhook: text="${text.substring(0,30)}" fileId=${fileId} mimeType="${mimeType}" isAudio=${isAudio}`)
 
@@ -195,7 +228,7 @@ export async function POST(req: NextRequest) {
   }
 
   // Tenta pelo userExtId (número sem DDI)
-  const userExtId: string = payload.userExtId ?? message.userExtId ?? ''
+  const userExtId: string = asStr(payload.userExtId ?? messageObj.userExtId ?? '')
   if (!lead && userExtId) {
     lead = await getLeadByTelefone('55' + userExtId)
   }
