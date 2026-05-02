@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { getPipeOpportunities, alertHuman, PIPELINE_AIVA, STAGES } from '@/lib/evotalks'
+import { isDiaUtil, rotuloHorario } from '@/lib/business-time'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -30,6 +31,13 @@ export async function POST(req: NextRequest) {
   }
 
   const ts = new Date().toISOString()
+
+  // Skip silencioso em fim de semana — auditoria so roda em dia util
+  // (operacao Track e seg-sex; rodar dom/sab so polui WhatsApp do Aldo)
+  if (!isDiaUtil()) {
+    console.log(`[auditoria] skip: ${rotuloHorario()} (fim de semana)`)
+    return NextResponse.json({ ok: true, ts, ignorado: 'fim_de_semana', quando: rotuloHorario() })
+  }
 
   // 1. Pega oportunidades abertas no Evo Talks (pipeline 15 = Campanha AIVA)
   let opps
