@@ -218,6 +218,97 @@ export async function checkUserExists(
 }
 
 /**
+ * Status da fila no Evo Talks — usado pelo health check.
+ * Detecta fila desconectada antes que cause silêncio operacional.
+ */
+export interface QueueStatus {
+  name: string
+  connected: boolean
+  authenticated: boolean
+  enabled: boolean
+  openChats: number
+  businessHoursConfigId: number | null
+}
+
+export async function getQueueStatus(): Promise<QueueStatus> {
+  const data = await post<Record<string, unknown>>('/int/getQueueStatus', {})
+  return {
+    name: (data.name as string) ?? '',
+    connected: Boolean(data.connected),
+    authenticated: Boolean(data.authenticated),
+    enabled: Boolean(data.enabled),
+    openChats: (data.openChats as number) ?? 0,
+    businessHoursConfigId: (data.businessHoursConfigId as number | null) ?? null,
+  }
+}
+
+/**
+ * Oportunidade aberta no CRM Evo Talks (subset dos campos que importam pra auditoria).
+ */
+export interface PipelineOpportunity {
+  id: number
+  title: string
+  mainphone: string
+  fkPipeline: number
+  fkStage: number
+  responsableid: number
+  status: number
+}
+
+/**
+ * Busca todas as oportunidades ABERTAS de um pipeline.
+ * Usa apiKey global (a apiKey de fila não autoriza esse endpoint).
+ * Param correto é `pipelineId` (não `fkPipeline`).
+ */
+export async function getPipeOpportunities(
+  pipelineId: number,
+): Promise<PipelineOpportunity[]> {
+  const url = `${BASE_URL}/int/getPipeOpportunities`
+  const globalKey = process.env.EVO_TALKS_API_KEY
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ queueId: QUEUE_ID, apiKey: globalKey, pipelineId }),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`Evo Talks /int/getPipeOpportunities → ${res.status}: ${text}`)
+  }
+  const data = (await res.json()) as Array<Record<string, unknown>>
+  return data.map((o) => ({
+    id: (o.id as number) ?? 0,
+    title: (o.title as string) ?? '',
+    mainphone: (o.mainphone as string) ?? '',
+    fkPipeline: (o.fkPipeline as number) ?? 0,
+    fkStage: (o.fkStage as number) ?? 0,
+    responsableid: (o.responsableid as number) ?? 0,
+    status: (o.status as number) ?? 0,
+  }))
+}
+
+/**
+ * IDs de chats encerrados no intervalo. Usa apiKey global.
+ * startDate/endDate em formato YYYY-MM-DD.
+ */
+export async function getChatsByDateRange(
+  startDate: string,
+  endDate: string,
+): Promise<number[]> {
+  const url = `${BASE_URL}/int/getChatsByDateRange`
+  const globalKey = process.env.EVO_TALKS_API_KEY
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ queueId: QUEUE_ID, apiKey: globalKey, startDate, endDate }),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`Evo Talks /int/getChatsByDateRange → ${res.status}: ${text}`)
+  }
+  return (await res.json()) as number[]
+}
+
+/**
  * Gera uma URL pública para download de um arquivo do Evo Talks.
  */
 export async function generateDownloadUrl(fileId: number): Promise<string> {
@@ -385,7 +476,7 @@ export async function alertHuman(
 
 // ─── CRM — Pipeline Campanha AIVA ───────────────────────────────────────────
 
-const PIPELINE_AIVA = 15
+export const PIPELINE_AIVA = 15
 const STAGES = {
   INICIO: 66,
   INTERESSADO: 47,
@@ -452,12 +543,78 @@ export async function linkChatToOpportunity(
 /**
  * IDs das etiquetas (tags) no CRM Evo Talks.
  * O endpoint updateOpportunity aceita um array de IDs numéricos em `tags`.
+ *
+ * REGRAS DE USO:
+ * - AIVA: aplicada em TODA opp criada antes do disparo (toda nova oportunidade ganha)
+ * - IMPORTANTE: aplicada quando lead tem 3+ lojas (numero_lojas >= 3)
+ * - ATENDIMENTO_HUMANO: aplicada quando lead pede pra falar com humano
+ *
+ * Os IDs são validados em runtime via /api/health (chama validateTagIds).
  */
 export const TAG_IDS = {
   AIVA: 69,
   IMPORTANTE: 74,
-  ATENDIMENTO_HUMANO: 76, // laranja — lead precisa ação humana (fim Fase 1/3, pedido de contrato, dúvida, etc.)
+  ATENDIMENTO_HUMANO: 76, // nome no Evo Talks é "Atend Humano"
 } as const
+
+/**
+ * Tag genérica retornada por /int/getTags (universo de tags do sistema —
+ * tanto contato quanto oportunidade). O endpoint exige apiKey global.
+ */
+export interface SystemTag {
+  id: number
+  name: string
+}
+
+export async function getTags(): Promise<SystemTag[]> {
+  const url = `${BASE_URL}/int/getTags`
+  const globalKey = process.env.EVO_TALKS_API_KEY
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ queueId: QUEUE_ID, apiKey: globalKey }),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`Evo Talks /int/getTags → ${res.status}: ${text}`)
+  }
+  const data = (await res.json()) as Array<Record<string, unknown>>
+  return data.map((t) => ({
+    id: (t.id as number) ?? 0,
+    name: (t.name as string) ?? '',
+  }))
+}
+
+/**
+ * Valida que os IDs hardcoded em TAG_IDS ainda batem com os nomes esperados
+ * no painel da Evo Talks. Detecta desincronização silenciosa quando alguém
+ * renomeia/recria tag pelo painel.
+ *
+ * Retorna { ok, drift } — ok=true se tudo casa, drift=[] vazio.
+ */
+export async function validateTagIds(): Promise<{
+  ok: boolean
+  drift: Array<{ id: number; expected: string; actual: string | null }>
+}> {
+  const tags = await getTags()
+  const byId = new Map(tags.map((t) => [t.id, t.name]))
+
+  const expectations: Array<{ id: number; expected: string }> = [
+    { id: TAG_IDS.AIVA, expected: 'AIVA' },
+    { id: TAG_IDS.IMPORTANTE, expected: 'IMPORTANTE' },
+    { id: TAG_IDS.ATENDIMENTO_HUMANO, expected: 'Atend' }, // match parcial — "Atend Humano"
+  ]
+
+  const drift: Array<{ id: number; expected: string; actual: string | null }> = []
+  for (const e of expectations) {
+    const actual = byId.get(e.id) ?? null
+    if (!actual || !actual.toUpperCase().includes(e.expected.toUpperCase())) {
+      drift.push({ id: e.id, expected: e.expected, actual })
+    }
+  }
+
+  return { ok: drift.length === 0, drift }
+}
 
 /**
  * Define as etiquetas (tags) de uma oportunidade existente.

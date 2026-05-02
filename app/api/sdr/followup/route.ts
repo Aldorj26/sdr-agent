@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getLeadsForFollowup, updateLeadStatus, saveMensagem, supabaseAdmin } from '@/lib/supabase'
-import { sendTemplate, changeOpportunityStage, addOpportunityNote, STAGES } from '@/lib/evotalks'
+import { sendTemplate, changeOpportunityStage, addOpportunityNote, STAGES, checkUserExists } from '@/lib/evotalks'
 import { isDiaUtil, rotuloHorario } from '@/lib/business-time'
 
 // Templates HSM aprovados pela Meta (Evo Talks)
@@ -49,6 +49,7 @@ export async function POST(req: NextRequest) {
 
   let sucesso = 0
   let falha = 0
+  let invalidos = 0
 
   for (const lead of leads) {
     const etapa = lead.etapa_cadencia
@@ -60,6 +61,24 @@ export async function POST(req: NextRequest) {
     }
 
     try {
+      // Valida que o numero existe no WhatsApp antes de gastar HSM (fail-open).
+      // Se nao existe, marca como NAO_QUALIFICADO e pula — nao gasta HSM em numero invalido.
+      try {
+        const check = await checkUserExists(lead.telefone)
+        if (!check.exists) {
+          console.warn(`Followup D+${etapa} pulado: ${lead.telefone} sem WhatsApp`)
+          await updateLeadStatus(lead.id, 'NAO_QUALIFICADO', {
+            data_proximo_followup: null,
+            observacoes: `[NUMERO_SEM_WHATSAPP] detectado em followup D+${etapa}`,
+          } as never)
+          invalidos++
+          continue
+        }
+      } catch (err) {
+        // Fail-open: se o check falhar, segue com disparo (nao bloqueia operacao)
+        console.warn(`checkUserExists falhou para ${lead.telefone}:`, err)
+      }
+
       // Envia HSM template via Evo Talks (funciona fora da janela de 24h)
       await sendTemplate(lead.telefone, template.id, [lead.nome])
 
@@ -105,5 +124,5 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ ok: true, processados: leads.length, sucesso, falha })
+  return NextResponse.json({ ok: true, processados: leads.length, sucesso, falha, invalidos })
 }
