@@ -15,6 +15,10 @@
     {
       "path": "/api/sdr/auditoria",
       "schedule": "0 8 * * *"
+    },
+    {
+      "path": "/api/sdr/briefing-aldo",
+      "schedule": "55 11 * * 1-5"
     }
   ]
 }
