@@ -10,14 +10,16 @@ const MAX_POR_EXECUCAO_DEFAULT = 20
 
 /**
  * Cron de reativação — dispara template HSM pra leads INTERESSADO que
- * ficaram parados entre 48h e 7 dias sem nenhuma mensagem do lojista.
+ * ficaram parados entre 48h e 14 dias sem nenhuma mensagem do lojista.
  *
  * Template HSM 21 "AIVA Reativação Interessado 48h":
  *   "Olá {{1}}! Conversamos aqui sobre a AIVA... Posso tirar mais alguma dúvida?"
  *
  * Regras:
  * - Só dias úteis, horário comercial (usa lib/business-time).
- * - Janela 48h–7 dias (não cutuca lead muito antigo — gasta HSM à toa).
+ * - Janela 48h–14 dias (ampliado de 7 pra 14 em 04/05/2026 pra recuperar
+ *   leads frios que ainda podem responder. Trade-off: +R$15-30/dia HSM
+ *   mas pega ~40 leads/semana adicionais).
  * - Flag [REATIVACAO_ENVIADA:timestamp] nas observações evita reenvio.
  * - Limita 20 por execução pra não estourar rate limit do Evo Talks.
  */
@@ -45,11 +47,13 @@ export async function POST(req: NextRequest) {
 
   // Query params opcionais pra rodadas manuais/bulk:
   //   ?diasMin=2      (default 2 = 48h)
-  //   ?diasMax=30     (default 7)
+  //   ?diasMax=30     (default 14)
   //   ?max=100        (default 20)
   const url = new URL(req.url)
   const diasMin = Number(url.searchParams.get('diasMin')) || 2
-  const diasMax = Number(url.searchParams.get('diasMax')) || 7
+  // 04/05/2026: ampliado de 7 pra 14 dias pra recuperar leads frios.
+  // Trade-off: +R$15-30/dia HSM mas pega ~40 leads/semana adicionais.
+  const diasMax = Number(url.searchParams.get('diasMax')) || 14
   const MAX_POR_EXECUCAO = Math.min(Number(url.searchParams.get('max')) || MAX_POR_EXECUCAO_DEFAULT, 100)
   const statusesParam = url.searchParams.get('statuses')
   const statuses = statusesParam
