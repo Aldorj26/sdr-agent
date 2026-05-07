@@ -261,13 +261,26 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // 4b. Imagem/foto recebida do lead.
-  // VictorIA não tem visão — substitui o conteúdo por um marker estruturado
-  // que ela é orientada (via prompt) a interpretar e pedir o dado em texto.
-  // Caption opcional da imagem (text/legacyText) é preservada se houver.
-  if (!conteudo.trim() && isImage) {
-    console.log(`Imagem recebida — fileId: ${fileId}, mimeType: ${mimeType} — marcando como [LEAD_ENVIOU_IMAGEM]`)
-    conteudo = '[LEAD_ENVIOU_IMAGEM]'
+  // 4b. Imagem/foto recebida do lead — baixa e prepara pra envio multimodal pro Claude.
+  // Claude Sonnet 4.5 tem visão e lê CNPJ, endereço, comprovantes etc. diretamente.
+  // O prompt da VictorIA orienta a SEMPRE confirmar o dado com o lead antes de salvar
+  // (evita gravar valores errados por causa de OCR).
+  let imagemPraClaude: { base64: string; mimeType: string } | null = null
+  if (!conteudo.trim() && isImage && fileId) {
+    try {
+      const img = await downloadAudio(fileId) // helper genérico — baixa qualquer fileId
+      imagemPraClaude = {
+        base64: img.buffer.toString('base64'),
+        mimeType: img.mimeType || mimeType || 'image/jpeg',
+      }
+      conteudo = '[LEAD_ENVIOU_IMAGEM]' // marker pro histórico/auditoria
+      console.log(`Imagem recebida e baixada — fileId: ${fileId}, mimeType: ${imagemPraClaude.mimeType}, ${img.buffer.byteLength} bytes`)
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      console.error(`Erro ao baixar imagem fileId=${fileId}: ${errMsg}`)
+      // Fallback: marca como imagem sem conteúdo — VictorIA pede em texto via prompt
+      conteudo = '[LEAD_ENVIOU_IMAGEM]'
+    }
   }
 
   if (!conteudo.trim()) {
@@ -656,7 +669,7 @@ export async function POST(req: NextRequest) {
     // O produto determina o prompt: AIVA (default) ou TRIAGEM (lead inbound puro).
     let resposta
     try {
-      resposta = await processarMensagem(conteudoEfetivo, historico, lead.nome, lead.status, lead.produto, dadosAcumulados)
+      resposta = await processarMensagem(conteudoEfetivo, historico, lead.nome, lead.status, lead.produto, dadosAcumulados, imagemPraClaude)
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err)
       const errStack = err instanceof Error ? err.stack : undefined

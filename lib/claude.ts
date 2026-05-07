@@ -424,7 +424,8 @@ export async function processarMensagem(
   nomeDoLead: string,
   statusAtual?: string,
   produto?: string,
-  dadosAcumulados?: Record<string, string>
+  dadosAcumulados?: Record<string, string>,
+  imagem?: { base64: string; mimeType: string } | null,
 ): Promise<ClaudeResponse> {
   // Monta histórico no formato Claude, agrupando mensagens consecutivas do
   // mesmo role (Claude API exige alternância user/assistant — se duas user
@@ -482,6 +483,38 @@ export async function processarMensagem(
     const ultima = messages[messages.length - 1]
     if (ultima.role === 'user' && typeof ultima.content === 'string') {
       ultima.content = `${faseInstrucao}\n\n${ultima.content}`
+    }
+  }
+
+  // Se o lead enviou uma imagem, transforma a última msg user em content
+  // multimodal: bloco de imagem + bloco de texto. Claude Sonnet 4.5 tem visão
+  // e consegue ler CNPJ, endereço, comprovantes etc. diretamente da foto.
+  // O prompt da VictorIA orienta a extrair os dados visíveis e SEMPRE
+  // confirmar com o lead antes de salvar (evita OCR errado).
+  if (imagem && imagem.base64 && imagem.mimeType) {
+    const mediaTypesValidos = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
+    let mediaType = imagem.mimeType.toLowerCase().split(';')[0].trim()
+    // Normaliza variações comuns
+    if (mediaType === 'image/jpg') mediaType = 'image/jpeg'
+    if (!mediaTypesValidos.includes(mediaType)) {
+      console.warn(`[claude.imagem] mimeType ${mediaType} não suportado pela API Anthropic — pulando imagem`)
+    } else {
+      const ultimaMsg = messages[messages.length - 1]
+      if (ultimaMsg.role === 'user' && typeof ultimaMsg.content === 'string') {
+        const textoAtual = ultimaMsg.content
+        ultimaMsg.content = [
+          {
+            type: 'image',
+            source: {
+              type: 'base64',
+              media_type: mediaType as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp',
+              data: imagem.base64,
+            },
+          },
+          { type: 'text', text: textoAtual },
+        ]
+        console.log(`[claude.imagem] imagem ${mediaType} (${imagem.base64.length} chars base64) anexada à última msg user`)
+      }
     }
   }
 
