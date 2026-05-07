@@ -18,7 +18,7 @@ import {
   createOpportunity, changeOpportunityStage, addOpportunityNote, addOpportunityTags, STAGES, TAG_IDS,
   PIPELINE_SINGLO, SINGLO_STAGES,
   updateOpportunityForms, updateOpportunityTitle, linkChatToOpportunity,
-  getOpportunity, sendToGoogleSheets, sendToHubSpot,
+  getOpportunity, getChatMessages, sendToGoogleSheets, sendToHubSpot,
 } from '@/lib/evotalks'
 import type { DadosColetados } from '@/lib/claude'
 import { processarMensagem, transcreverAudio, FALLBACK_MENSAGEM_OVERLOADED } from '@/lib/claude'
@@ -174,6 +174,10 @@ export async function POST(req: NextRequest) {
     mimeType === 'application/ogg' ||
     mimeType.includes('opus')
   )
+  // Imagem/foto: detectada pra que VictorIA saiba que recebeu uma mídia.
+  // Não há OCR — o conteúdo entra como marcador especial e VictorIA é orientada
+  // (via prompt) a pedir o dado em texto, já que ela não consegue ler imagem.
+  const isImage = !!fileId && fileId > 0 && mimeType.startsWith('image/')
 
   // Também suporta formato antigo (Evo Talks v1 - remoteJid)
   const dataKeyObj = payloadDataObj ? asObj(payloadDataObj.key) : null
@@ -255,6 +259,15 @@ export async function POST(req: NextRequest) {
       console.error('Erro ao transcrever áudio:', err)
       conteudo = '' // Não conseguiu transcrever
     }
+  }
+
+  // 4b. Imagem/foto recebida do lead.
+  // VictorIA não tem visão — substitui o conteúdo por um marker estruturado
+  // que ela é orientada (via prompt) a interpretar e pedir o dado em texto.
+  // Caption opcional da imagem (text/legacyText) é preservada se houver.
+  if (!conteudo.trim() && isImage) {
+    console.log(`Imagem recebida — fileId: ${fileId}, mimeType: ${mimeType} — marcando como [LEAD_ENVIOU_IMAGEM]`)
+    conteudo = '[LEAD_ENVIOU_IMAGEM]'
   }
 
   if (!conteudo.trim()) {
@@ -507,6 +520,64 @@ export async function POST(req: NextRequest) {
     while (iteracao < MAX_ITERACOES) {
       iteracao++
       const loopStart = new Date().toISOString()
+
+    // 8a. Sync de mensagens manuais do Nei via Evo Talks API
+    //
+    // A Evo Talks NÃO dispara webhook fromMe pra mensagens manuais (Nei
+    // respondendo via painel ou WhatsApp Business). Resultado: VictorIA
+    // não vê o que Nei disse e perde contexto.
+    //
+    // Solução: antes de buscar o histórico do Supabase, consulta /int/getChatMessages
+    // pra trazer as últimas msgs OUT (direction=3) do chat. Insere no Supabase
+    // como direcao='out' template_hsm='manual_humano' as que ainda não estão lá.
+    if (lead.evotalks_chat_id) {
+      try {
+        const evoMsgs = await getChatMessages(Number(lead.evotalks_chat_id), 20)
+        const evoOuts = evoMsgs
+          .filter(m => m.direction === 3 && (m.message?.trim() ?? ''))
+          .sort((a, b) => a.messagetimestamp - b.messagetimestamp) // mais antigas primeiro
+
+        if (evoOuts.length > 0) {
+          // Pega últimos 20 OUTs do Supabase pra dedup por conteúdo
+          const { data: dbOuts } = await supabaseAdmin
+            .from('sdr_mensagens')
+            .select('conteudo')
+            .eq('lead_id', lead.id)
+            .eq('direcao', 'out')
+            .order('enviado_em', { ascending: false })
+            .limit(50)
+          const dbContents = new Set((dbOuts ?? []).map(m => (m.conteudo ?? '').trim()))
+
+          // Cutoff: só sincroniza msgs das últimas 48h (evita ressuscitar
+          // mensagens muito antigas que já são irrelevantes pro contexto)
+          const cutoffSec = Math.floor((Date.now() - 48 * 60 * 60 * 1000) / 1000)
+
+          let sincronizadas = 0
+          for (const evoMsg of evoOuts) {
+            const content = (evoMsg.message ?? '').trim()
+            if (!content) continue
+            if (evoMsg.messagetimestamp < cutoffSec) continue
+            if (dbContents.has(content)) continue
+            await supabaseAdmin.from('sdr_mensagens').insert({
+              lead_id: lead.id,
+              direcao: 'out',
+              conteudo: content,
+              template_hsm: 'manual_humano',
+              enviado_em: new Date(evoMsg.messagetimestamp * 1000).toISOString(),
+            })
+            dbContents.add(content)
+            sincronizadas++
+          }
+          if (sincronizadas > 0) {
+            console.log(`[sync_evo] Lead ${lead.telefone}: ${sincronizadas} msg(s) manuais sincronizadas da Evo Talks`)
+          }
+        }
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err)
+        console.error(`[sync_evo] Falha ao sincronizar msgs do lead ${lead.telefone}:`, errMsg)
+        // Não bloqueia o webhook — segue com o histórico do Supabase mesmo sem sync
+      }
+    }
 
     // 8. Busca histórico (inclui as msgs que chegaram durante o debounce),
     // remove marcadores internos ([Template X enviado]) que confundem a VictorIA,
