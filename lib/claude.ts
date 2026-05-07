@@ -134,6 +134,7 @@ export interface ClaudeResponse {
     | 'COLETANDO_COMPLEMENTO' // Fase 3 em andamento (setado via stage 49)
     | 'CADASTRO_COMPLETO' // 12 dados Fase 3 completos
     | 'ANALISE_AIVA'     // stage 50 — aguardando lead concluir onboarding CAF
+    | 'TREINAMENTO'      // stage 70 — lead aprovado, em treinamento/operação
   acionar_humano: boolean
   motivo_humano: string | null
   dados_coletados: DadosColetados | null
@@ -197,6 +198,12 @@ function buildFaseInstrucao(statusAtual: string, dadosAcumulados?: Record<string
 
   if (statusAtual === 'ANALISE_AIVA') {
     return `${dadosBlock}[INSTRUÇÃO DO SISTEMA]\nStatus do lead = ANALISE_AIVA. Você está na FASE 4.\nO lead já foi aprovado e recebeu o link de onboarding (https://retail-onboarding-hub.vercel.app/onboarding/full).\nEle precisa: acessar o link, preencher 7 etapas com dados da empresa e fazer reconhecimento facial (CAF) ao final.\nSeu papel agora:\n- Verificar se ele concluiu o cadastro e a biometria\n- Ajudar com dúvidas sobre o processo (começa pelo CNPJ, 7 etapas, biometria no final)\n- Se confirmar que concluiu: acionar_humano = true, motivo_humano = "cadastro_caf_confirmado"\n- Se tiver dificuldade: ajude com orientações práticas (seção PÓS-APROVAÇÃO do seu conhecimento)\nRetorne SEMPRE novo_status = "ANALISE_AIVA" (só o time muda esse status via CRM).\nEXCEÇÕES: OPT_OUT se pedir pra parar.\n[FIM INSTRUÇÃO DO SISTEMA]`
+  }
+  if (statusAtual === 'CADASTRO_COMPLETO') {
+    return `${dadosBlock}[INSTRUÇÃO DO SISTEMA — NÃO IGNORAR]\nStatus do lead = CADASTRO_COMPLETO. Ele JÁ COMPLETOU TODOS os 12 dados de qualificação (Fase 1 + Fase 3) e está aguardando o time mover pra próxima etapa (Em Análise CAF, Treinar, etc.).\nNUNCA pergunte dados de qualificação novamente (CNPJ, faturamento, lojas, email, etc.) — todos já foram coletados.\nO lead provavelmente está perguntando sobre:\n- Treinamento (próxima data, link Meet, materiais)\n- Login / liberação do sistema AIVA\n- Cadastro de funcionários (link do Forms)\n- Dúvidas operacionais (como vender, fluxo do crediário)\nResponda do que SOUBER pela seção PÓS-APROVAÇÃO. Se for dúvida específica que você não sabe (login travado, prazo, problema técnico) → acionar_humano = true, motivo_humano = "duvida_pos_cadastro: [contexto]".\nRetorne SEMPRE novo_status = "CADASTRO_COMPLETO" (não regrida pra INTERESSADO ou outras fases anteriores).\n[FIM INSTRUÇÃO DO SISTEMA]`
+  }
+  if (statusAtual === 'TREINAMENTO') {
+    return `${dadosBlock}[INSTRUÇÃO DO SISTEMA — NÃO IGNORAR]\nStatus do lead = TREINAMENTO. Ele já foi aprovado, completou o cadastro CAF e foi movido pra etapa de treinamento. Já recebeu HSM com link Meet, Drive de materiais e formulário de cadastro de funcionários.\nNUNCA pergunte dados de qualificação novamente — todos já foram coletados.\nO lead provavelmente está perguntando sobre:\n- Próxima data do treinamento (geralmente quintas 9h30)\n- Link do Meet (https://meet.google.com/hqn-vcrr-dxo)\n- Materiais de apoio (link Drive)\n- Formulário de cadastro dos funcionários\n- Login / acesso ao sistema AIVA pós-treinamento\nResponda do que SOUBER. Se for dúvida específica que você não sabe → acionar_humano = true, motivo_humano = "duvida_treinamento: [contexto]".\nRetorne SEMPRE novo_status = "TREINAMENTO" (não regrida pra fases anteriores).\n[FIM INSTRUÇÃO DO SISTEMA]`
   }
   if (statusAtual === 'COLETANDO_COMPLEMENTO') {
     return `${dadosBlock}[INSTRUÇÃO DO SISTEMA — NÃO IGNORAR]\nStatus do lead = COLETANDO_COMPLEMENTO. Você está na FASE 3.\nA Fase 1 e Fase 2 JÁ PASSARAM. Ignore a mensagem "Perfeito, já tenho tudo pra pré-aprovação" no histórico — ela é de uma fase anterior.\nAgora você PRECISA coletar os 5 dados restantes, um de cada vez: email, faturamento, valor boleto, localização detalhada, CNPJs adicionais.\nComece perguntando o EMAIL do sócio.\nRetorne novo_status = "COLETANDO_COMPLEMENTO" (ou "CADASTRO_COMPLETO" se os 5 dados ficarem completos nessa mensagem).\nNUNCA retorne "AGUARDANDO_APROVACAO" nem "INTERESSADO".\n[FIM INSTRUÇÃO DO SISTEMA]`
