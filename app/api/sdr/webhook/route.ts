@@ -30,9 +30,15 @@ import { isAdmin, isCommand, handleCommand, respondToAdmin } from '@/lib/admin-c
 const STATUS_IGNORAR: LeadStatus[] = ['OPT_OUT', 'NAO_QUALIFICADO', 'DESCARTADO', 'BOT_DETECTADO']
 
 // Status terminais positivos que disparam ALERTA pro Nei e encerram.
-// FORMULARIO_ENVIADO é legacy (fluxo antigo). CADASTRO_COMPLETO é o atual.
-// Lead respondeu depois de já ter completado cadastro — humano precisa intervir.
-const STATUS_ALERTA_E_ENCERRA: LeadStatus[] = ['FORMULARIO_ENVIADO', 'CADASTRO_COMPLETO']
+// FORMULARIO_ENVIADO é legacy (fluxo antigo) — bloqueia processamento.
+//
+// CADASTRO_COMPLETO foi removido em 2026-05-08: depois do cadastro vem
+// treinamento, dúvidas operacionais, login, etc. Lead continua perguntando
+// e a VictorIA precisa responder. Caso real: Richard (5534988478275) mandou
+// audio sobre treinamento e VictorIA ficou muda — Nei teve que responder
+// manualmente. Agora VictorIA processa normalmente; o prompt orienta ela
+// a tratar lead pós-cadastro como cliente ativo (não requalifica).
+const STATUS_ALERTA_E_ENCERRA: LeadStatus[] = ['FORMULARIO_ENVIADO']
 
 /**
  * Remove mensagens 'in' consecutivas com conteúdo idêntico.
