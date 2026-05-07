@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { alertHuman, getOpportunity, getOpenChatId, openChat, sendMessageToChat, sendToGoogleSheets, sendTemplate, sendText, STAGES } from '@/lib/evotalks'
 import { supabaseAdmin } from '@/lib/supabase'
-import { normalizaNome, APROVACAO_TEMPLATE_VAR, buildAvisoMatrizMsg, buildAvisoCadastroMsg } from '@/lib/text'
+import { normalizaNome, APROVACAO_TEMPLATE_VAR, buildAvisoMatrizMsg, buildAvisoCadastroMsg, buildAvisoTreinamentoMsgs } from '@/lib/text'
 
 /**
  * Normaliza telefone brasileiro para o formato E.164 (com 55 no início).
@@ -21,6 +21,55 @@ function normalizePhoneBR(raw: string | null | undefined): string {
     return '55' + digits
   }
   return digits
+}
+
+/**
+ * Verifica se a janela WhatsApp de 24h está aberta pro lead.
+ * Retorna true se o lead enviou alguma msg (direcao=in) nas últimas 24h.
+ *
+ * Importante: textos livres só entregam ao WhatsApp dentro dessa janela.
+ * Se a janela estiver fechada no momento de uma transição de stage, os
+ * avisos enviados via sendText ficam queued no painel Evo Talks mas o
+ * WhatsApp bloqueia silenciosamente — daí precisamos do mecanismo de
+ * reforço (Caminho 2): marcar flag de aviso pendente, e quando o lead
+ * responder o webhook reenvia.
+ */
+async function janela24hAberta(leadId: string): Promise<boolean> {
+  const { data: ultimaIn } = await supabaseAdmin
+    .from('sdr_mensagens')
+    .select('enviado_em')
+    .eq('lead_id', leadId)
+    .eq('direcao', 'in')
+    .order('enviado_em', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (!ultimaIn) return false
+  const idadeMs = Date.now() - new Date(ultimaIn.enviado_em).getTime()
+  return idadeMs < 24 * 60 * 60 * 1000
+}
+
+/**
+ * Marca uma flag de aviso pendente em observacoes do lead.
+ * Quando o lead responder, o webhook detecta a flag e reenvia os avisos
+ * (que estavam queued sem entregar por causa da janela 24h fechada).
+ *
+ * Formato: [AVISO_50_PENDENTE:ISO] ou [AVISO_70_PENDENTE:ISO]
+ */
+async function marcarAvisoPendente(leadId: string, codigo: 'AVISO_50_PENDENTE' | 'AVISO_70_PENDENTE'): Promise<void> {
+  const { data: lead } = await supabaseAdmin
+    .from('sdr_leads')
+    .select('observacoes')
+    .eq('id', leadId)
+    .maybeSingle()
+  const obsAtual = lead?.observacoes ?? ''
+  // Remove flag anterior do mesmo código se houver, e adiciona a nova
+  const obsLimpa = obsAtual.replace(new RegExp(`\\[${codigo}:[^\\]]+\\]\\s*`, 'g'), '').trim()
+  const novaFlag = `[${codigo}:${new Date().toISOString()}]`
+  await supabaseAdmin
+    .from('sdr_leads')
+    .update({ observacoes: `${novaFlag} ${obsLimpa}`.trim() })
+    .eq('id', leadId)
+  console.log(`Lead ${leadId}: flag ${codigo} marcada (janela 24h fechada — reforço quando lead responder)`)
 }
 
 /**
@@ -304,11 +353,20 @@ export async function POST(req: NextRequest) {
 
       // Texto livre reforçando o preenchimento completo do cadastro CAF —
       // incluindo a biometria facial obrigatória ao final.
-      // Entrega no WhatsApp quando a janela 24h está aberta (lead respondeu
-      // nas últimas 24h). Quando não, fica registrado no painel da Evo Talks.
+      // Entrega no WhatsApp só quando a janela 24h está aberta (lead respondeu
+      // nas últimas 24h). Se janela fechada, marcamos flag pra reforço quando
+      // o lead responder (Caminho 2 — reforço via webhook).
       const avisoCadastroMsg = buildAvisoCadastroMsg(nomeContato)
       const chatIdParaTextos = tplResult.chatId ?? (lead?.evotalks_chat_id ? Number(lead.evotalks_chat_id) : undefined)
       await sendTextsAfterTemplate(telefone, [avisoCadastroMsg], chatIdParaTextos)
+
+      // Caminho 2: se janela 24h fechada, marca flag pra reforço futuro
+      if (lead?.id) {
+        const janelaAberta = await janela24hAberta(lead.id)
+        if (!janelaAberta) {
+          await marcarAvisoPendente(lead.id, 'AVISO_50_PENDENTE')
+        }
+      }
 
       if (lead?.id) {
         await supabaseAdmin.from('sdr_mensagens').insert([
@@ -409,50 +467,10 @@ export async function POST(req: NextRequest) {
 
       const tplResult = await sendTemplate(telefone, templateId, [nomeContato])
 
-      // Textos complementares — enviados logo após o template HSM
-      // (janela de 24h já foi aberta pelo template acima)
-
-      // Calcula a próxima quinta-feira às 09:30 BRT (12:30 UTC) pra montar
-      // o link "Adicionar ao Google Calendar". Se hoje for quinta, pega a da
-      // semana que vem (treinamento dura 1h, das 09:30 às 10:30 BRT).
-      const proximaQuinta = (() => {
-        const agora = new Date()
-        const diaSemanaUTC = agora.getUTCDay() // 0=dom, 4=qui
-        let diasAteQuinta = (4 - diaSemanaUTC + 7) % 7
-        if (diasAteQuinta === 0) diasAteQuinta = 7 // se hoje é quinta, pega a próxima
-        const inicio = new Date(agora)
-        inicio.setUTCDate(agora.getUTCDate() + diasAteQuinta)
-        inicio.setUTCHours(12, 30, 0, 0) // 09:30 BRT
-        const fim = new Date(inicio)
-        fim.setUTCHours(13, 30, 0, 0) // 10:30 BRT
-        const fmt = (d: Date) => d.toISOString().replace(/[-:]|\.\d{3}/g, '')
-        return { start: fmt(inicio), end: fmt(fim) }
-      })()
-      const calendarLink =
-        `https://calendar.google.com/calendar/render?action=TEMPLATE` +
-        `&text=${encodeURIComponent('Treinamento AIVA')}` +
-        `&dates=${proximaQuinta.start}/${proximaQuinta.end}` +
-        `&details=${encodeURIComponent('Link da reunião: https://meet.google.com/hqn-vcrr-dxo')}` +
-        `&location=${encodeURIComponent('https://meet.google.com/hqn-vcrr-dxo')}`
-
-      const msgReuniao =
-        `📅 *Treinamento ao vivo:*\n` +
-        `Os treinamentos acontecem geralmente nas *quintas-feiras às 9h30*. Confirme o horário com nossa equipe.\n\n` +
-        `🔗 Link da reunião:\n` +
-        `👉 meet.google.com/hqn-vcrr-dxo\n\n` +
-        `📲 *Adicionar ao seu calendário:*\n` +
-        `👉 ${calendarLink}`
-
-      const msgMateriais =
-        `📚 *Materiais de apoio:*\n` +
-        `Todos os documentos e vídeos do treinamento estão aqui:\n` +
-        `👉 https://drive.google.com/drive/folders/1t0WpRYg7b5TIb7Hbbkjg9oyMI1bGXe-w?usp=sharing`
-
-      const msgCadastro =
-        `📝 *Cadastro dos funcionários:*\n` +
-        `Para liberar o acesso da equipe da sua loja ao sistema AIVA, preencha este formulário:\n` +
-        `👉 https://docs.google.com/forms/d/1_3QtZtSjOFVh3zQVpwkNW0JatI3T0F4pG5t-O90cKcA/viewform\n\n` +
-        `Qualquer dúvida é só chamar aqui! 😊`
+      // Textos complementares — enviados logo após o template HSM.
+      // 3 mensagens: reunião (Meet+calendário), materiais (Drive), cadastro funcionários (Forms).
+      // Centralizado em buildAvisoTreinamentoMsgs pra reuso no reforço via webhook (Caminho 2).
+      const [msgReuniao, msgMateriais, msgCadastro] = buildAvisoTreinamentoMsgs()
 
       await sendTextsAfterTemplate(telefone, [msgReuniao, msgMateriais, msgCadastro], tplResult.chatId)
 
@@ -477,6 +495,12 @@ export async function POST(req: NextRequest) {
           { lead_id: lead.id, direcao: 'out', conteudo: msgMateriais },
           { lead_id: lead.id, direcao: 'out', conteudo: msgCadastro },
         ])
+
+        // Caminho 2: se janela 24h fechada, marca flag pra reforço futuro
+        const janelaAberta = await janela24hAberta(lead.id)
+        if (!janelaAberta) {
+          await marcarAvisoPendente(lead.id, 'AVISO_70_PENDENTE')
+        }
       }
 
       // Alerta Aldo + Nei sobre o início do treinamento

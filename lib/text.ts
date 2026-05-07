@@ -39,6 +39,65 @@ export const APROVACAO_TEMPLATE_VAR =
   'https://retail-onboarding-hub.vercel.app/onboarding/full'
 
 /**
+ * Calcula a próxima quinta-feira às 09:30 BRT (12:30 UTC).
+ * Se hoje for quinta, pega a quinta da semana que vem.
+ * Treinamento dura 1h (09:30 às 10:30 BRT).
+ */
+export function proximaQuintaFeira09h30(): { start: string; end: string } {
+  const agora = new Date()
+  const diaSemanaUTC = agora.getUTCDay() // 0=dom, 4=qui
+  let diasAteQuinta = (4 - diaSemanaUTC + 7) % 7
+  if (diasAteQuinta === 0) diasAteQuinta = 7
+  const inicio = new Date(agora)
+  inicio.setUTCDate(agora.getUTCDate() + diasAteQuinta)
+  inicio.setUTCHours(12, 30, 0, 0) // 09:30 BRT
+  const fim = new Date(inicio)
+  fim.setUTCHours(13, 30, 0, 0) // 10:30 BRT
+  const fmt = (d: Date) => d.toISOString().replace(/[-:]|\.\d{3}/g, '')
+  return { start: fmt(inicio), end: fmt(fim) }
+}
+
+/**
+ * Monta os 3 textos enviados após o template HSM 25 [AIVA] TREINAMENTO (stage 70):
+ * 1. Reunião ao vivo (link Meet + link Google Calendar pré-preenchido)
+ * 2. Materiais de apoio (Drive)
+ * 3. Cadastro dos funcionários (Google Forms)
+ *
+ * Reutilizado pelo opportunity-stage (envio imediato) e pelo webhook
+ * (reforço quando lead responde — Caminho 2).
+ */
+export function buildAvisoTreinamentoMsgs(): string[] {
+  const proximaQuinta = proximaQuintaFeira09h30()
+  const calendarLink =
+    `https://calendar.google.com/calendar/render?action=TEMPLATE` +
+    `&text=${encodeURIComponent('Treinamento AIVA')}` +
+    `&dates=${proximaQuinta.start}/${proximaQuinta.end}` +
+    `&details=${encodeURIComponent('Link da reunião: https://meet.google.com/hqn-vcrr-dxo')}` +
+    `&location=${encodeURIComponent('https://meet.google.com/hqn-vcrr-dxo')}`
+
+  const msgReuniao =
+    `📅 *Treinamento ao vivo:*\n` +
+    `Os treinamentos acontecem geralmente nas *quintas-feiras às 9h30*. Confirme o horário com nossa equipe.\n\n` +
+    `🔗 Link da reunião:\n` +
+    `👉 meet.google.com/hqn-vcrr-dxo\n\n` +
+    `📲 *Adicionar ao seu calendário:*\n` +
+    `👉 ${calendarLink}`
+
+  const msgMateriais =
+    `📚 *Materiais de apoio:*\n` +
+    `Todos os documentos e vídeos do treinamento estão aqui:\n` +
+    `👉 https://drive.google.com/drive/folders/1t0WpRYg7b5TIb7Hbbkjg9oyMI1bGXe-w?usp=sharing`
+
+  const msgCadastro =
+    `📝 *Cadastro dos funcionários:*\n` +
+    `Para liberar o acesso da equipe da sua loja ao sistema AIVA, preencha este formulário:\n` +
+    `👉 https://docs.google.com/forms/d/1_3QtZtSjOFVh3zQVpwkNW0JatI3T0F4pG5t-O90cKcA/viewform\n\n` +
+    `Qualquer dúvida é só chamar aqui! 😊`
+
+  return [msgReuniao, msgMateriais, msgCadastro]
+}
+
+/**
  * Mensagem enviada logo após o template de aprovação, orientando sobre o
  * preenchimento completo do cadastro CAF — incluindo a biometria facial obrigatória.
  */

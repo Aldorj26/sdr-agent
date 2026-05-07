@@ -22,6 +22,7 @@ import {
 } from '@/lib/evotalks'
 import type { DadosColetados } from '@/lib/claude'
 import { processarMensagem, transcreverAudio, FALLBACK_MENSAGEM_OVERLOADED } from '@/lib/claude'
+import { normalizaNome, buildAvisoCadastroMsg, buildAvisoTreinamentoMsgs } from '@/lib/text'
 import { isAdmin, isCommand, handleCommand, respondToAdmin } from '@/lib/admin-commands'
 
 // Status que bloqueiam processamento (silenciosamente — sem alerta).
@@ -524,6 +525,50 @@ export async function POST(req: NextRequest) {
     // histórico se a conversa passou de 30 msgs). Injetados no prompt pra
     // evitar que a VictorIA re-pergunte o que o lead já respondeu.
     const dadosAcumulados = parseDadosAcumulados(lead.observacoes ?? null)
+
+    // 8b. Caminho 2 — Reforço de avisos pendentes
+    // Quando o lead respondeu pela primeira vez após o stage 50/70 ter sido
+    // movido com a janela 24h fechada, reenvia os avisos que ficaram apenas
+    // queued no painel da Evo Talks (não chegaram ao WhatsApp na hora).
+    // A janela agora está aberta porque o lead acabou de responder.
+    const obs = lead.observacoes ?? ''
+    const aviso50Pendente = obs.includes('[AVISO_50_PENDENTE')
+    const aviso70Pendente = obs.includes('[AVISO_70_PENDENTE')
+    if (aviso50Pendente || aviso70Pendente) {
+      try {
+        const nomeContato = normalizaNome(lead.nome) || 'Lojista'
+        const msgsPraReenviar: string[] = []
+        if (aviso50Pendente) {
+          msgsPraReenviar.push(buildAvisoCadastroMsg(nomeContato))
+        }
+        if (aviso70Pendente) {
+          msgsPraReenviar.push(...buildAvisoTreinamentoMsgs())
+        }
+        for (const msg of msgsPraReenviar) {
+          try {
+            await sendText(lead.telefone, msg, lead.evotalks_chat_id)
+            await saveMensagem(lead.id, 'out', msg)
+            await new Promise(r => setTimeout(r, 500)) // pequena pausa entre msgs
+          } catch (sendErr) {
+            console.error(`[Caminho2] Falha ao reenviar aviso pra ${lead.telefone}:`, sendErr)
+          }
+        }
+        // Limpa as flags após o reforço (idempotência)
+        const obsLimpa = obs
+          .replace(/\[AVISO_50_PENDENTE:[^\]]+\]\s*/g, '')
+          .replace(/\[AVISO_70_PENDENTE:[^\]]+\]\s*/g, '')
+          .trim()
+        await supabaseAdmin
+          .from('sdr_leads')
+          .update({ observacoes: obsLimpa || null })
+          .eq('id', lead.id)
+        lead.observacoes = obsLimpa
+        console.log(`[Caminho2] Lead ${lead.telefone}: ${msgsPraReenviar.length} aviso(s) reforçado(s) (flags limpas)`)
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err)
+        console.error(`[Caminho2] Erro ao processar reforço de avisos pra ${lead.telefone}:`, errMsg)
+      }
+    }
 
     // 9. Processa com Claude (VictorIA)
     // Passa o status atual pra Claude saber em qual fase do fluxo está
