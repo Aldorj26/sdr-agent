@@ -98,6 +98,28 @@ export function buildAvisoTreinamentoMsgs(): string[] {
 }
 
 /**
+ * Mensagem enviada logo após o template HSM 20 "Complete o Cadastro" (stage 49),
+ * orientando o lojista sobre os 5 dados complementares que a VictorIA vai
+ * coletar na sequência (Fase 3).
+ *
+ * Reutilizada pelo opportunity-stage (envio imediato) e pelo webhook
+ * (reforço quando lead responde — Caminho 2).
+ */
+export function buildAvisoColetandoComplementoMsg(nomeContato: string | null): string {
+  const saudacao = nomeContato ? `${nomeContato}, ` : ''
+  return (
+    `${saudacao}sua loja foi *pré-aprovada* pela AIVA! 🎉\n\n` +
+    `Pra avançar pra próxima etapa, preciso só de mais 5 informações:\n\n` +
+    `📧 Email do sócio\n` +
+    `💰 Faturamento anual da operação\n` +
+    `💳 Valor médio mensal em vendas parceladas (boleto)\n` +
+    `📍 Cidades das suas lojas\n` +
+    `🏢 Outros CNPJs (matriz/filial), se tiver\n\n` +
+    `Vou te perguntar um por um pra ficar tranquilo. Pode começar? 😊`
+  )
+}
+
+/**
  * Mensagem enviada logo após o template de aprovação, orientando sobre o
  * preenchimento completo do cadastro CAF — incluindo a biometria facial obrigatória.
  */

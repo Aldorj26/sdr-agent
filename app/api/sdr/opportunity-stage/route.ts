@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { alertHuman, getOpportunity, getOpenChatId, openChat, sendMessageToChat, sendToGoogleSheets, sendTemplate, sendText, STAGES } from '@/lib/evotalks'
 import { supabaseAdmin } from '@/lib/supabase'
-import { normalizaNome, APROVACAO_TEMPLATE_VAR, buildAvisoMatrizMsg, buildAvisoCadastroMsg, buildAvisoTreinamentoMsgs } from '@/lib/text'
+import { normalizaNome, APROVACAO_TEMPLATE_VAR, buildAvisoMatrizMsg, buildAvisoCadastroMsg, buildAvisoTreinamentoMsgs, buildAvisoColetandoComplementoMsg } from '@/lib/text'
 
 /**
  * Normaliza telefone brasileiro para o formato E.164 (com 55 no início).
@@ -55,7 +55,7 @@ async function janela24hAberta(leadId: string): Promise<boolean> {
  *
  * Formato: [AVISO_50_PENDENTE:ISO] ou [AVISO_70_PENDENTE:ISO]
  */
-async function marcarAvisoPendente(leadId: string, codigo: 'AVISO_50_PENDENTE' | 'AVISO_70_PENDENTE'): Promise<void> {
+async function marcarAvisoPendente(leadId: string, codigo: 'AVISO_49_PENDENTE' | 'AVISO_50_PENDENTE' | 'AVISO_70_PENDENTE'): Promise<void> {
   const { data: lead } = await supabaseAdmin
     .from('sdr_leads')
     .select('observacoes')
@@ -181,10 +181,10 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: false, erro: 'telefone_nao_encontrado' }, { status: 400 })
       }
 
-      // Busca o lead no Supabase pra pegar nome + id
+      // Busca o lead no Supabase pra pegar nome + id + chatId
       const { data: lead } = await supabaseAdmin
         .from('sdr_leads')
-        .select('id, nome')
+        .select('id, nome, evotalks_chat_id')
         .eq('telefone', telefone)
         .maybeSingle()
 
@@ -203,7 +203,13 @@ export async function POST(req: NextRequest) {
       }
 
       const textoPadrao = 'sua loja foi pré-aprovada pela AIVA! 🎉'
-      await sendTemplate(telefone, templateId, [nomeSocio, textoPadrao])
+      const tplResult49 = await sendTemplate(telefone, templateId, [nomeSocio, textoPadrao])
+
+      // Texto livre listando os 5 dados que ainda faltam — orienta o lojista
+      // pro que vem na Fase 3 (VictorIA vai perguntar um por um).
+      const avisoComplementoMsg = buildAvisoColetandoComplementoMsg(nomeSocio)
+      const chatId49 = tplResult49.chatId ?? (lead?.evotalks_chat_id ? Number(lead.evotalks_chat_id) : undefined)
+      await sendTextsAfterTemplate(telefone, [avisoComplementoMsg], chatId49)
 
       // Muda status do lead pra COLETANDO_COMPLEMENTO (se o lead existir no Supabase)
       if (lead?.id) {
@@ -215,12 +221,25 @@ export async function POST(req: NextRequest) {
           })
           .eq('id', lead.id)
 
-        await supabaseAdmin.from('sdr_mensagens').insert({
-          lead_id: lead.id,
-          direcao: 'out',
-          conteudo: `[Template Complete o Cadastro enviado — ${nomeSocio}]`,
-          template_hsm: 'aiva_complete_cadastro',
-        })
+        await supabaseAdmin.from('sdr_mensagens').insert([
+          {
+            lead_id: lead.id,
+            direcao: 'out',
+            conteudo: `[Template Complete o Cadastro enviado — ${nomeSocio}]`,
+            template_hsm: 'aiva_complete_cadastro',
+          },
+          {
+            lead_id: lead.id,
+            direcao: 'out',
+            conteudo: avisoComplementoMsg,
+          },
+        ])
+
+        // Caminho 2: se janela 24h fechada, marca flag pra reforço futuro
+        const janelaAberta = await janela24hAberta(lead.id)
+        if (!janelaAberta) {
+          await marcarAvisoPendente(lead.id, 'AVISO_49_PENDENTE')
+        }
       }
 
       // Alerta Aldo + Nei de que a oportunidade foi aprovada internamente e
