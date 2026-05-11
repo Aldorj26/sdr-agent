@@ -63,15 +63,81 @@ export const supabaseAdmin = createClient(
 
 // ─── Helpers de leads ─────────────────────────────────────────────────────────
 
+/**
+ * Gera variações comuns do número brasileiro pra busca robusta no banco.
+ *
+ * Cobre os principais formatos que a Evo Talks/WhatsApp Business usa:
+ * - E.164 com 9 do mobile: 5555999218930 (13 digitos)
+ * - E.164 sem 9 do mobile: 555599218930  (12 digitos — WA Business as vezes dropa)
+ * - Sem country code com 9: 55999218930  (11 digitos — DDD + mobile)
+ * - Sem country code sem 9: 5599218930   (10 digitos)
+ *
+ * Sem isso, leads dispararados num formato sao criados como duplicatas TRIAGEM
+ * quando a Evo Talks devolve webhook em formato diferente.
+ */
+function gerarVariacoesTelefone(raw: string): string[] {
+  const digits = (raw ?? '').replace(/\D/g, '')
+  if (!digits) return []
+  const variacoes = new Set<string>([digits])
+
+  // Extrai partes
+  let comCountry: string
+  let semCountry: string
+
+  if (digits.startsWith('55') && (digits.length === 12 || digits.length === 13)) {
+    comCountry = digits
+    semCountry = digits.slice(2)
+  } else if (digits.length === 10 || digits.length === 11) {
+    comCountry = '55' + digits
+    semCountry = digits
+  } else {
+    return Array.from(variacoes)
+  }
+
+  variacoes.add(comCountry)
+  variacoes.add(semCountry)
+
+  // Variação com 9 do mobile (Brasil) — pra numeros 12 digitos (com country) /
+  // 10 digitos (sem) que tem 8 digit local, adiciona o 9 depois do DDD
+  if (comCountry.length === 12) {
+    // 55 + DDD(2) + 8digit → 55 + DDD + 9 + 8digit
+    variacoes.add(comCountry.slice(0, 4) + '9' + comCountry.slice(4))
+  }
+  if (semCountry.length === 10) {
+    variacoes.add(semCountry.slice(0, 2) + '9' + semCountry.slice(2))
+  }
+
+  // Variação SEM 9 do mobile — pra numeros 13 digitos (com country) /
+  // 11 digitos (sem) que tem 9digit mobile, remove o 9 depois do DDD se for "9"
+  if (comCountry.length === 13 && comCountry[4] === '9') {
+    variacoes.add(comCountry.slice(0, 4) + comCountry.slice(5))
+  }
+  if (semCountry.length === 11 && semCountry[2] === '9') {
+    variacoes.add(semCountry.slice(0, 2) + semCountry.slice(3))
+  }
+
+  return Array.from(variacoes)
+}
+
 export async function getLeadByTelefone(telefone: string): Promise<Lead | null> {
   // .maybeSingle() retorna null quando não encontra (sem lançar erro do Supabase
   // como o .single() fazia). Erros reais (rede, permissão) ficam visíveis no log
   // ao invés de serem confundidos com "lead inexistente" — o que antes podia
   // criar duplicatas via fluxo TRIAGEM em caso de falha de conexão.
+  //
+  // Busca por VARIAÇÕES de formato (E.164 13/12 digitos, sem country 11/10,
+  // com/sem o 9 do mobile). Cobre o caso onde o Evo Talks devolve o telefone
+  // em formato diferente do que foi salvo no disparo — antes isso criava
+  // duplicatas TRIAGEM.
+  const variacoes = gerarVariacoesTelefone(telefone)
+  if (variacoes.length === 0) return null
+
   const { data, error } = await supabaseAdmin
     .from('sdr_leads')
     .select('*')
-    .eq('telefone', telefone)
+    .in('telefone', variacoes)
+    .order('criado_em', { ascending: true }) // se houver duplicata, pega o mais antigo (original)
+    .limit(1)
     .maybeSingle()
 
   if (error) {
