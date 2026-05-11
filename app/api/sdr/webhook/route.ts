@@ -896,6 +896,13 @@ export async function POST(req: NextRequest) {
           .update({ evotalks_opportunity_id: String(oppId) })
           .eq('id', lead.id)
         console.log(`CRM: Oportunidade Singlo #${oppId} criada em "Interessado" pra ${lead.nome}`)
+
+        // Lead inbound Singlo → aplica tag INBOUND
+        try {
+          await addOpportunityTags(oppId, [TAG_IDS.INBOUND])
+        } catch (err) {
+          console.log(`CRM: Erro ao adicionar tag INBOUND na opp Singlo #${oppId}:`, err)
+        }
       } else if (usarPipelineAiva) {
         // Pipeline AIVA (15), stage Interessado (47) — comportamento padrão
         const tituloPrefixo = ehTriagem ? '(inbound) ' : ''
@@ -912,11 +919,13 @@ export async function POST(req: NextRequest) {
           .eq('id', lead.id)
         console.log(`CRM: Oportunidade AIVA #${oppId} criada para ${lead.nome}${ehTriagem ? ' (inbound)' : ''}`)
 
-        // Aplica tag AIVA em toda nova oportunidade AIVA criada
+        // Aplica tag AIVA (sempre) + tag INBOUND se for lead inbound (TRIAGEM)
+        const tagsParaAplicar: number[] = [TAG_IDS.AIVA]
+        if (ehTriagem) tagsParaAplicar.push(TAG_IDS.INBOUND)
         try {
-          await addOpportunityTags(oppId, [TAG_IDS.AIVA])
+          await addOpportunityTags(oppId, tagsParaAplicar)
         } catch (err) {
-          console.log(`CRM: Erro ao adicionar tag AIVA na oportunidade #${oppId}:`, err)
+          console.log(`CRM: Erro ao adicionar tags na oportunidade #${oppId}:`, err)
         }
       } else {
         // TRIAGEM ainda sem produto identificado — espera próxima msg da VictorIA

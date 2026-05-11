@@ -581,6 +581,7 @@ export const TAG_IDS = {
   AIVA: 69,
   IMPORTANTE: 74,
   ATENDIMENTO_HUMANO: 76, // nome no Evo Talks é "Atend Humano"
+  INBOUND: 77,            // aplicada em toda opp criada a partir de lead inbound (TRIAGEM)
 } as const
 
 /**
@@ -629,6 +630,7 @@ export async function validateTagIds(): Promise<{
     { id: TAG_IDS.AIVA, expected: 'AIVA' },
     { id: TAG_IDS.IMPORTANTE, expected: 'IMPORTANTE' },
     { id: TAG_IDS.ATENDIMENTO_HUMANO, expected: 'Atend' }, // match parcial — "Atend Humano"
+    { id: TAG_IDS.INBOUND, expected: 'INBOUND' },
   ]
 
   const drift: Array<{ id: number; expected: string; actual: string | null }> = []
