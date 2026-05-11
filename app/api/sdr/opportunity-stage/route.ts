@@ -181,12 +181,27 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: false, erro: 'telefone_nao_encontrado' }, { status: 400 })
       }
 
-      // Busca o lead no Supabase pra pegar nome + id + chatId
+      // Busca o lead no Supabase pra pegar nome + id + chatId + status
       const { data: lead } = await supabaseAdmin
         .from('sdr_leads')
-        .select('id, nome, evotalks_chat_id')
+        .select('id, nome, evotalks_chat_id, status')
         .eq('telefone', telefone)
         .maybeSingle()
+
+      // Idempotência: se o lead já passou da Fase 3 (CADASTRO_COMPLETO/ANALISE_AIVA/
+      // TREINAMENTO), NÃO re-dispara o HSM 20 nem volta o status pra COLETANDO_COMPLEMENTO.
+      // Bug que isso resolve: Nei moveu o card no Evo Talks → CRM trigger disparou
+      // stage 49 de novo → re-enviou HSM "Complete o Cadastro" duplicado pro lead
+      // que já completou tudo.
+      const STATUS_JA_PASSOU_FASE3 = ['CADASTRO_COMPLETO', 'ANALISE_AIVA', 'TREINAMENTO']
+      if (lead?.id && STATUS_JA_PASSOU_FASE3.includes(lead.status)) {
+        console.log(`Stage 49 ignorado — lead ${telefone} já está em ${lead.status} (passou da Fase 3). Opp #${opportunityId}.`)
+        return NextResponse.json({
+          ok: true,
+          ignorado: 'lead_ja_passou_fase_3',
+          status_atual: lead.status,
+        })
+      }
 
       const nomeSocio = normalizaNome(forms['da6ddf70']) || normalizaNome(lead?.nome ?? null) || 'Lojista'
 

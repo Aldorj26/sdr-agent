@@ -727,9 +727,16 @@ export async function POST(req: NextRequest) {
     console.warn(
       `[guard] Lead ${lead.telefone}: VictorIA tentou CADASTRO_COMPLETO com status atual = ${lead.status}. Bloqueado.`,
     )
-    // Fallback seguro: mantém lead na Fase 1 (INTERESSADO). Se já estava em
-    // AGUARDANDO_APROVACAO ou outro estado válido pra IA, preserva.
-    const STATUS_VALIDOS_IA = ['INTERESSADO', 'AGUARDANDO', 'AGUARDANDO_APROVACAO', 'COLETANDO_COMPLEMENTO']
+    // Fallback seguro: SEMPRE preserva o status atual do lead (nunca regride).
+    // Inclui fases avançadas (CADASTRO_COMPLETO, ANALISE_AIVA, TREINAMENTO) pra
+    // evitar o bug onde lead em CADASTRO_COMPLETO era jogado de volta pra INTERESSADO
+    // quando VictorIA retornava status errado. Só usa INTERESSADO como ultimo recurso
+    // pra status totalmente inválidos (OPT_OUT/NAO_QUALIFICADO/DESCARTADO).
+    const STATUS_VALIDOS_IA = [
+      'INTERESSADO', 'AGUARDANDO', 'AGUARDANDO_APROVACAO',
+      'COLETANDO_COMPLEMENTO', 'CADASTRO_COMPLETO',
+      'ANALISE_AIVA', 'TREINAMENTO',
+    ]
     resposta.novo_status = (STATUS_VALIDOS_IA.includes(lead.status) ? lead.status : 'INTERESSADO') as typeof resposta.novo_status
     resposta.mensagem = 'Posso te tirar mais alguma dúvida sobre como a AIVA funciona?'
     try {
@@ -756,9 +763,21 @@ export async function POST(req: NextRequest) {
     console.warn(
       `[guard] Lead ${lead.telefone}: VictorIA tentou AGUARDANDO_APROVACAO com status atual = ${lead.status}. Bloqueado.`,
     )
-    const STATUS_FALLBACK = ['INTERESSADO', 'AGUARDANDO', 'COLETANDO_COMPLEMENTO']
+    // SEMPRE preserva o status atual — nunca regride lead de fase avançada
+    // (CADASTRO_COMPLETO/ANALISE_AIVA/TREINAMENTO) pra INTERESSADO por engano.
+    // Bug raiz fixado 2026-05-11: lead JF CELULARES regrediu de CADASTRO_COMPLETO
+    // pra AGUARDANDO_APROVACAO porque CADASTRO_COMPLETO não estava no fallback.
+    const STATUS_FALLBACK = [
+      'INTERESSADO', 'AGUARDANDO', 'COLETANDO_COMPLEMENTO',
+      'CADASTRO_COMPLETO', 'ANALISE_AIVA', 'TREINAMENTO',
+    ]
     resposta.novo_status = (STATUS_FALLBACK.includes(lead.status) ? lead.status : 'INTERESSADO') as typeof resposta.novo_status
-    resposta.mensagem = 'Tô seguindo aqui com você, qualquer dúvida me chama 👍'
+    // Mensagem fallback adaptada ao status — não fica fora de contexto
+    if (['CADASTRO_COMPLETO', 'ANALISE_AIVA', 'TREINAMENTO'].includes(lead.status)) {
+      resposta.mensagem = 'Show! Vou acompanhar aqui e te aviso quando tiver novidades. 👍'
+    } else {
+      resposta.mensagem = 'Tô seguindo aqui com você, qualquer dúvida me chama 👍'
+    }
     try {
       const msg = `⚠️ *${lead.nome}* (${lead.telefone}) — VictorIA tentou voltar pra AGUARDANDO_APROVACAO de um status inválido (atual: ${lead.status}). Mensagem reescrita e status mantido.`
       if (process.env.NEI_WHATSAPP) await alertHuman(process.env.NEI_WHATSAPP, msg)
