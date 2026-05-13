@@ -977,9 +977,18 @@ export async function POST(req: NextRequest) {
         await updateOpportunityTitle(oppId, `${nomeVarejo} — AIVA`)
       }
 
-      // Preenche dados coletados no formulário do CRM
-      if (resposta.dados_coletados) {
-        await updateOpportunityForms(oppId, resposta.dados_coletados as Record<string, string | null | undefined>, lead.telefone)
+      // Preenche dados coletados no formulário do CRM.
+      // Envia TODOS os dados acumulados (não só os novos do turn atual) — bug raiz
+      // detectado 2026-05-13 (GR Celulares): VictorIA marcava AGUARDANDO_APROVACAO
+      // mas updateOpportunityForms só atualizava os campos novos do turn, e a
+      // validação subsequente da Fase 1 via formsdata via apenas 1-2 campos →
+      // revertia status pra INTERESSADO. Mandar dados acumulados resolve isso.
+      const dadosCompletos = {
+        ...dadosAcumulados,
+        ...(resposta.dados_coletados as Record<string, string | null | undefined> ?? {}),
+      } as Record<string, string | null | undefined>
+      if (Object.keys(dadosCompletos).length > 0) {
+        await updateOpportunityForms(oppId, dadosCompletos, lead.telefone)
       }
 
       // Detecta 3+ lojas e aplica tag "Importante" (mantém AIVA)
@@ -1021,21 +1030,40 @@ export async function POST(req: NextRequest) {
       // AGUARDANDO_APROVACAO e só mandou uma msg espontânea, não re-executa.
       if (resposta.novo_status === 'AGUARDANDO_APROVACAO' && lead.status !== 'AGUARDANDO_APROVACAO') {
         // Validação dos 7 campos obrigatórios da Fase 1 ANTES de mover stage e
-        // mandar Google Sheets. Defesa contra IA marcando completude prematura
-        // (espelho da validação dos 12 campos pro CADASTRO_COMPLETO).
+        // mandar Google Sheets. Defesa contra IA marcando completude prematura.
+        //
+        // Validação DUPLA:
+        // 1) Evo Talks formsdata (estado oficial após updateOpportunityForms)
+        // 2) dadosAcumulados do Supabase (fonte da verdade — VictorIA acumulou
+        //    durante a conversa). Cobre o caso onde Evo Talks ainda não sincronizou.
+        //
+        // Um campo só é considerado "faltante" se ESTIVER VAZIO EM AMBOS os lugares.
         const oppPreCheck = await getOpportunity(oppId)
         const formsPreCheck = (oppPreCheck.formsdata ?? {}) as Record<string, string | null>
-        const camposFase1 = {
-          nome_socio: 'da6ddf70',
-          telefone: 'db8569f0',
-          nome_varejo: 'dcacfa00',
-          cnpj_matriz: 'dd2ab580',
-          regiao_varejo: 'dede58f0',
-          numero_lojas: 'df6f9c70',
-          possui_outra_financeira: 'e07d62f0',
+        const camposFase1: Record<string, { fieldId: string; dadosKey: string }> = {
+          nome_socio:              { fieldId: 'da6ddf70', dadosKey: 'nome_socio' },
+          telefone:                { fieldId: 'db8569f0', dadosKey: 'telefone_socio' },
+          nome_varejo:             { fieldId: 'dcacfa00', dadosKey: 'nome_varejo' },
+          cnpj_matriz:             { fieldId: 'dd2ab580', dadosKey: 'cnpj_matriz' },
+          regiao_varejo:           { fieldId: 'dede58f0', dadosKey: 'regiao_varejo' },
+          numero_lojas:            { fieldId: 'df6f9c70', dadosKey: 'numero_lojas' },
+          possui_outra_financeira: { fieldId: 'e07d62f0', dadosKey: 'possui_outra_financeira' },
+        }
+        const dadosMergedCheck: Record<string, string | undefined> = {
+          ...dadosAcumulados,
+          ...(resposta.dados_coletados as Record<string, string | undefined> ?? {}),
+        }
+        // Telefone do sócio: se VictorIA não preencheu mas o lead respondeu "Este"
+        // ou similar, usa o telefone do próprio WhatsApp como fallback
+        if (!dadosMergedCheck.telefone_socio?.toString().trim()) {
+          dadosMergedCheck.telefone_socio = lead.telefone
         }
         const faltantesFase1 = Object.entries(camposFase1)
-          .filter(([, fieldId]) => !formsPreCheck[fieldId]?.toString().trim())
+          .filter(([, { fieldId, dadosKey }]) => {
+            const evoVazio = !formsPreCheck[fieldId]?.toString().trim()
+            const supaVazio = !dadosMergedCheck[dadosKey]?.toString().trim()
+            return evoVazio && supaVazio
+          })
           .map(([label]) => label)
 
         if (faltantesFase1.length > 0) {
