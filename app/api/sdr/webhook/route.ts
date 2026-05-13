@@ -720,9 +720,15 @@ export async function POST(req: NextRequest) {
   // COLETANDO_COMPLEMENTO (Fase 3 ativada pelo operador via stage CADASTRO_RECEBIDO).
   // Se a IA tentar pular direto da Fase 1 (INTERESSADO) ou Fase 2 pra CADASTRO_COMPLETO,
   // reescreve a mensagem e mantém o status atual antes de enviar qualquer coisa pro lead.
+  // Guard só atua em TRANSIÇÕES inválidas. Se lead já está em CADASTRO_COMPLETO
+  // ou status superior (ANALISE_AIVA/TREINAMENTO) e VictorIA retorna CADASTRO_COMPLETO
+  // (mantendo), não é "pulo" — é manutenção idempotente.
+  const ESTADOS_VALIDOS_CADASTRO_COMPLETO = [
+    'COLETANDO_COMPLEMENTO', 'CADASTRO_COMPLETO', 'ANALISE_AIVA', 'TREINAMENTO',
+  ]
   if (
     resposta.novo_status === 'CADASTRO_COMPLETO' &&
-    lead.status !== 'COLETANDO_COMPLEMENTO'
+    !ESTADOS_VALIDOS_CADASTRO_COMPLETO.includes(lead.status)
   ) {
     console.warn(
       `[guard] Lead ${lead.telefone}: VictorIA tentou CADASTRO_COMPLETO com status atual = ${lead.status}. Bloqueado.`,
@@ -1232,7 +1238,10 @@ export async function POST(req: NextRequest) {
       `7 dados coletados pela VictorIA. Mover pra Cadastro Recebido no Evo Talks quando aprovar.`
     await alertHuman(process.env.NEI_WHATSAPP!, msg)
     await alertHuman(process.env.ALDO_WHATSAPP!, msg)
-  } else if (resposta.novo_status === 'CADASTRO_COMPLETO') {
+  } else if (resposta.novo_status === 'CADASTRO_COMPLETO' && lead.status !== 'CADASTRO_COMPLETO') {
+    // Só dispara na TRANSIÇÃO (idempotente) — se lead já está em CADASTRO_COMPLETO
+    // e só mandou uma msg espontânea, não re-alerta. Fix bug 2026-05-13 (Jaiminho):
+    // alertas duplicados ✅ "completou o cadastro" disparavam toda msg.
     const msg =
       `✅ *${lead.nome}* (${lead.telefone} — ${lead.cidade ?? 'cidade n/d'}) completou o cadastro!\n` +
       `12 dados enviados pro HubSpot. Pronto pra mover pra Análise AIVA.`
