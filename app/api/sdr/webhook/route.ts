@@ -720,6 +720,26 @@ export async function POST(req: NextRequest) {
   // COLETANDO_COMPLEMENTO (Fase 3 ativada pelo operador via stage CADASTRO_RECEBIDO).
   // Se a IA tentar pular direto da Fase 1 (INTERESSADO) ou Fase 2 pra CADASTRO_COMPLETO,
   // reescreve a mensagem e mantém o status atual antes de enviar qualquer coisa pro lead.
+  // Pre-guard: se lead já está em fase SUPERIOR a CADASTRO_COMPLETO
+  // (ANALISE_AIVA/TREINAMENTO) e VictorIA retorna CADASTRO_COMPLETO, isso é
+  // REGRESSÃO disfarçada. Forçamos o status atual pra evitar:
+  // 1) Disparar alerta "✅ completou o cadastro" repetidamente (race com opp-stage)
+  // 2) Re-executar fluxos de Pré Aprovação / Google Sheets
+  // 3) Confundir a VictorIA com regressão fantasma
+  // Caso real Fone Express (5531972337505, 13/05 14:07): lead chegou em TREINAMENTO
+  // (após opp-stage handler stage 70), mas VictorIA continuou retornando
+  // CADASTRO_COMPLETO → alerta duplicado pro Aldo/Nei.
+  const FASES_AVANCADAS_CADASTRO = ['ANALISE_AIVA', 'TREINAMENTO']
+  if (
+    resposta.novo_status === 'CADASTRO_COMPLETO' &&
+    FASES_AVANCADAS_CADASTRO.includes(lead.status)
+  ) {
+    console.log(
+      `[guard] Lead ${lead.telefone}: VictorIA retornou CADASTRO_COMPLETO mas lead ja em ${lead.status}. Mantendo status atual (sem regressao nem re-alerta).`,
+    )
+    resposta.novo_status = lead.status as typeof resposta.novo_status
+  }
+
   // Guard só atua em TRANSIÇÕES inválidas. Se lead já está em CADASTRO_COMPLETO
   // ou status superior (ANALISE_AIVA/TREINAMENTO) e VictorIA retorna CADASTRO_COMPLETO
   // (mantendo), não é "pulo" — é manutenção idempotente.
