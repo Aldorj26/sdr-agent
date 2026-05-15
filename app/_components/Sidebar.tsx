@@ -22,7 +22,7 @@ const SECTIONS: NavSection[] = [
   {
     label: 'Performance',
     items: [
-      { label: 'Funil de conversão', href: '/?view=funil', icon: '📈' },
+      { label: 'Funil de conversão', href: '/funil', icon: '📈' },
       { label: 'Melhores horários', href: '/?view=horarios', icon: '⏰' },
       { label: 'Consumo de tokens', href: '/metricas/tokens', icon: '🪙' },
     ],

@@ -34,6 +34,7 @@ export const config = {
     '/campanha',
     '/campanhas',
     '/curadoria',
+    '/funil',
     '/metricas/:path*',
     '/api/leads/:path*',
     '/api/curadoria/:path*',
