@@ -17,12 +17,28 @@ export async function GET(
     return NextResponse.json({ error: 'lead_nao_encontrado' }, { status: 404 })
   }
 
-  const { data: mensagens } = await supabaseAdmin
+  const { data: mensagensRaw } = await supabaseAdmin
     .from('sdr_mensagens')
     .select('*')
     .eq('lead_id', id)
     .order('enviado_em', { ascending: true })
     .limit(100)
 
-  return NextResponse.json({ lead, mensagens: mensagens ?? [] })
+  const mensagens = mensagensRaw ?? []
+
+  // Anexa a avaliação de curadoria (joia/não joia) em cada mensagem
+  const { data: curRaw } = await supabaseAdmin
+    .from('sdr_curadoria')
+    .select('mensagem_id, avaliacao')
+    .in('mensagem_id', mensagens.map((m) => m.id))
+
+  const curMap = new Map(
+    (curRaw ?? []).map((c) => [c.mensagem_id as string, c.avaliacao as 'boa' | 'ruim']),
+  )
+  const mensagensComAvaliacao = mensagens.map((m) => ({
+    ...m,
+    avaliacao: curMap.get(m.id) ?? null,
+  }))
+
+  return NextResponse.json({ lead, mensagens: mensagensComAvaliacao })
 }

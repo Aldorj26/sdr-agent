@@ -25,7 +25,7 @@ export default function CuradoriaPage() {
           <h1 style={{ margin: 0 }}>Curadoria de mensagens</h1>
         </div>
         <p style={{ margin: '0.5rem 0 0', color: 'var(--text-muted)', fontSize: '0.82rem' }}>
-          Avalie as respostas da VictorIA e anote correções — base pra melhorar o agente.
+          Respostas avaliadas (👍 / 👎) nas conversas do painel. Aqui você anota a correção — base pra melhorar a VictorIA.
         </p>
       </header>
 

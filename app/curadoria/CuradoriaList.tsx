@@ -16,15 +16,15 @@ interface Item {
 
 interface Stats {
   total: number
-  avaliadas: number
+  sem_correcao: number
   ruins: number
 }
 
-type Filtro = 'todas' | 'nao_avaliadas' | 'ruins'
+type Filtro = 'todas' | 'sem_correcao' | 'ruins'
 
 const FILTROS: { id: Filtro; label: string }[] = [
   { id: 'todas', label: 'Todas' },
-  { id: 'nao_avaliadas', label: 'Não avaliadas' },
+  { id: 'sem_correcao', label: 'Sem correção' },
   { id: 'ruins', label: 'Marcadas ruins' },
 ]
 
@@ -41,7 +41,7 @@ function fmtData(iso: string): string {
 export default function CuradoriaList() {
   const [filtro, setFiltro] = useState<Filtro>('todas')
   const [itens, setItens] = useState<Item[]>([])
-  const [stats, setStats] = useState<Stats>({ total: 0, avaliadas: 0, ruins: 0 })
+  const [stats, setStats] = useState<Stats>({ total: 0, sem_correcao: 0, ruins: 0 })
   const [carregando, setCarregando] = useState(true)
 
   const carregar = useCallback(async () => {
@@ -50,7 +50,7 @@ export default function CuradoriaList() {
       const res = await fetch(`/api/curadoria?filtro=${filtro}`, { cache: 'no-store' })
       const data = await res.json()
       setItens(data.itens ?? [])
-      setStats(data.stats ?? { total: 0, avaliadas: 0, ruins: 0 })
+      setStats(data.stats ?? { total: 0, sem_correcao: 0, ruins: 0 })
     } finally {
       setCarregando(false)
     }
@@ -65,15 +65,13 @@ export default function CuradoriaList() {
       {/* Stats */}
       <div className="cards-grid" style={{ marginBottom: '1.5rem' }}>
         <div className="card">
-          <div className="card-label">Respostas no período</div>
+          <div className="card-label">Respostas avaliadas</div>
           <div className="card-value">{stats.total}</div>
         </div>
         <div className="card">
-          <div className="card-label">Avaliadas</div>
-          <div className="card-value">{stats.avaliadas}</div>
-          <div className="card-hint">
-            {stats.total > 0 ? Math.round((stats.avaliadas / stats.total) * 100) : 0}% do total
-          </div>
+          <div className="card-label">Sem correção</div>
+          <div className="card-value">{stats.sem_correcao}</div>
+          <div className="card-hint">pendentes de ajuste</div>
         </div>
         <div className="card">
           <div className="card-label">Marcadas ruins</div>
@@ -118,7 +116,11 @@ export default function CuradoriaList() {
             borderRadius: 12,
           }}
         >
-          Nenhuma resposta {filtro === 'nao_avaliadas' ? 'pendente' : filtro === 'ruins' ? 'marcada como ruim' : ''} por aqui.
+          {filtro === 'todas'
+            ? 'Nenhuma resposta avaliada ainda. Abra uma conversa no painel e use os botões 👍 / 👎 nas respostas da VictorIA — elas aparecem aqui pra você ajustar a correção.'
+            : filtro === 'sem_correcao'
+              ? 'Nenhuma resposta sem correção — tudo ajustado. ✓'
+              : 'Nenhuma resposta marcada como ruim.'}
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.9rem' }}>

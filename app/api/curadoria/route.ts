@@ -25,103 +25,111 @@ export interface ItemCuradoria {
 }
 
 /**
- * GET /api/curadoria?filtro=todas|nao_avaliadas|ruins
- * Lista as últimas respostas de texto livre da VictorIA (não-templates) com a
- * mensagem do lead que as precedeu e o estado de avaliação atual.
+ * GET /api/curadoria?filtro=todas|sem_correcao|ruins
+ * Lista as respostas da VictorIA que foram AVALIADAS (joia/não joia) na tela
+ * de conversa do painel. Cada item traz a mensagem do lead que a precedeu,
+ * a avaliação e a correção (preenchida aqui na curadoria).
  */
 export async function GET(req: NextRequest) {
   const filtro = req.nextUrl.searchParams.get('filtro') ?? 'todas'
 
-  // Últimas 250 mensagens — janela suficiente pra parear in/out por lead
-  const { data: msgsRaw } = await supabaseAdmin
-    .from('sdr_mensagens')
-    .select('id, lead_id, direcao, conteudo, template_hsm, enviado_em')
-    .order('enviado_em', { ascending: false })
-    .limit(250)
+  // 1. Avaliações registradas (joia/não joia), mais recentes primeiro
+  const { data: curRaw } = await supabaseAdmin
+    .from('sdr_curadoria')
+    .select('mensagem_id, lead_id, avaliacao, correcao, criado_em')
+    .order('criado_em', { ascending: false })
+    .limit(150)
 
-  const msgs = (msgsRaw ?? []) as MensagemRow[]
+  const curados = (curRaw ?? []) as Array<{
+    mensagem_id: string
+    lead_id: string | null
+    avaliacao: 'boa' | 'ruim'
+    correcao: string | null
+    criado_em: string
+  }>
 
-  // Ordena ascendente e agrupa por lead pra encontrar o "in" antes de cada "out"
-  const asc = [...msgs].sort((a, b) => a.enviado_em.localeCompare(b.enviado_em))
-  const porLead: Record<string, MensagemRow[]> = {}
-  for (const m of asc) {
-    ;(porLead[m.lead_id] ??= []).push(m)
+  if (curados.length === 0) {
+    return NextResponse.json({ itens: [], stats: { total: 0, sem_correcao: 0, ruins: 0 } })
   }
 
-  // Coleta as respostas curáveis: out + texto livre (sem template_hsm)
-  const itens: Omit<ItemCuradoria, 'lead_nome' | 'lead_telefone' | 'avaliacao' | 'correcao'>[] = []
-  for (const seq of Object.values(porLead)) {
-    for (let i = 0; i < seq.length; i++) {
-      const m = seq[i]
-      if (m.direcao !== 'out' || m.template_hsm) continue
-      // Acha o último "in" antes dessa resposta
-      let pergunta: string | null = null
-      for (let j = i - 1; j >= 0; j--) {
-        if (seq[j].direcao === 'in') {
-          pergunta = seq[j].conteudo
-          break
-        }
-      }
-      itens.push({
-        mensagem_id: m.id,
-        lead_id: m.lead_id,
-        pergunta,
-        resposta: m.conteudo,
-        enviado_em: m.enviado_em,
-      })
-    }
-  }
+  // 2. Mensagens avaliadas + janela de mensagens dos leads envolvidos (p/ contexto)
+  const msgIds = curados.map((c) => c.mensagem_id)
+  const leadIds = [...new Set(curados.map((c) => c.lead_id).filter(Boolean))] as string[]
 
-  // Mais recentes primeiro, limita a 60
-  itens.sort((a, b) => b.enviado_em.localeCompare(a.enviado_em))
-  const top = itens.slice(0, 60)
+  const [{ data: avaliadasRaw }, { data: contextoRaw }, { data: leadsRaw }] =
+    await Promise.all([
+      supabaseAdmin
+        .from('sdr_mensagens')
+        .select('id, lead_id, direcao, conteudo, template_hsm, enviado_em')
+        .in('id', msgIds),
+      supabaseAdmin
+        .from('sdr_mensagens')
+        .select('id, lead_id, direcao, conteudo, template_hsm, enviado_em')
+        .in('lead_id', leadIds)
+        .order('enviado_em', { ascending: true })
+        .limit(1500),
+      supabaseAdmin.from('sdr_leads').select('id, nome, telefone').in('id', leadIds),
+    ])
 
-  // Busca nomes dos leads e avaliações existentes
-  const leadIds = [...new Set(top.map((i) => i.lead_id))]
-  const msgIds = top.map((i) => i.mensagem_id)
-
-  const [{ data: leadsRaw }, { data: curRaw }] = await Promise.all([
-    supabaseAdmin.from('sdr_leads').select('id, nome, telefone').in('id', leadIds),
-    supabaseAdmin
-      .from('sdr_curadoria')
-      .select('mensagem_id, avaliacao, correcao')
-      .in('mensagem_id', msgIds),
-  ])
-
-  const leadMap = new Map(
-    (leadsRaw ?? []).map((l) => [l.id as string, l as { id: string; nome: string; telefone: string }]),
+  const avaliadas = new Map(
+    ((avaliadasRaw ?? []) as MensagemRow[]).map((m) => [m.id, m]),
   )
-  const curMap = new Map(
-    (curRaw ?? []).map((c) => [
-      c.mensagem_id as string,
-      c as { mensagem_id: string; avaliacao: 'boa' | 'ruim'; correcao: string | null },
+  const leadMap = new Map(
+    (leadsRaw ?? []).map((l) => [
+      l.id as string,
+      l as { id: string; nome: string; telefone: string },
     ]),
   )
 
-  let resultado: ItemCuradoria[] = top.map((i) => {
-    const lead = leadMap.get(i.lead_id)
-    const cur = curMap.get(i.mensagem_id)
-    return {
-      ...i,
-      lead_nome: lead?.nome ?? 'Lead',
-      lead_telefone: lead?.telefone ?? '',
-      avaliacao: cur?.avaliacao ?? null,
-      correcao: cur?.correcao ?? null,
+  // Agrupa o contexto por lead pra achar o "in" antes de cada resposta
+  const porLead: Record<string, MensagemRow[]> = {}
+  for (const m of (contextoRaw ?? []) as MensagemRow[]) {
+    ;(porLead[m.lead_id] ??= []).push(m)
+  }
+  function perguntaAntes(leadId: string, enviadoEm: string): string | null {
+    const seq = porLead[leadId] ?? []
+    let pergunta: string | null = null
+    for (const m of seq) {
+      if (m.enviado_em >= enviadoEm) break
+      if (m.direcao === 'in') pergunta = m.conteudo
     }
-  })
-
-  if (filtro === 'nao_avaliadas') {
-    resultado = resultado.filter((i) => i.avaliacao === null)
-  } else if (filtro === 'ruins') {
-    resultado = resultado.filter((i) => i.avaliacao === 'ruim')
+    return pergunta
   }
 
-  // Contadores pro cabeçalho
-  const total = top.length
-  const avaliadas = top.filter((i) => curMap.has(i.mensagem_id)).length
-  const ruins = [...curMap.values()].filter((c) => c.avaliacao === 'ruim').length
+  // 3. Monta os itens
+  let itens: ItemCuradoria[] = curados
+    .map((c) => {
+      const msg = avaliadas.get(c.mensagem_id)
+      if (!msg) return null
+      const lead = c.lead_id ? leadMap.get(c.lead_id) : undefined
+      return {
+        mensagem_id: c.mensagem_id,
+        lead_id: c.lead_id ?? '',
+        lead_nome: lead?.nome ?? 'Lead',
+        lead_telefone: lead?.telefone ?? '',
+        pergunta: perguntaAntes(msg.lead_id, msg.enviado_em),
+        resposta: msg.conteudo,
+        enviado_em: msg.enviado_em,
+        avaliacao: c.avaliacao,
+        correcao: c.correcao,
+      } as ItemCuradoria
+    })
+    .filter((x): x is ItemCuradoria => x !== null)
 
-  return NextResponse.json({ itens: resultado, stats: { total, avaliadas, ruins } })
+  const total = itens.length
+  const semCorrecao = itens.filter((i) => !i.correcao).length
+  const ruins = itens.filter((i) => i.avaliacao === 'ruim').length
+
+  if (filtro === 'sem_correcao') {
+    itens = itens.filter((i) => !i.correcao)
+  } else if (filtro === 'ruins') {
+    itens = itens.filter((i) => i.avaliacao === 'ruim')
+  }
+
+  return NextResponse.json({
+    itens,
+    stats: { total, sem_correcao: semCorrecao, ruins },
+  })
 }
 
 /**

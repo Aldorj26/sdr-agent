@@ -27,6 +27,7 @@ interface Mensagem {
   conteudo: string
   template_hsm: string | null
   enviado_em: string
+  avaliacao: 'boa' | 'ruim' | null
 }
 
 const STATUS_COLOR: Record<string, string> = {
@@ -190,6 +191,28 @@ export default function LeadDrawer() {
       window.alert(`Erro: ${err}`)
     } finally {
       setSaving(false)
+    }
+  }
+
+  // Avalia uma resposta da VictorIA (joia / não joia). A avaliação vai pra
+  // tabela sdr_curadoria e a mensagem aparece na página /curadoria, onde se
+  // escreve a correção. Update otimista — não bloqueia a UI.
+  async function avaliarMensagem(mensagemId: string, avaliacao: 'boa' | 'ruim') {
+    if (!data) return
+    setData({
+      ...data,
+      mensagens: data.mensagens.map((m) =>
+        m.id === mensagemId ? { ...m, avaliacao } : m,
+      ),
+    })
+    try {
+      await fetch('/api/curadoria', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mensagem_id: mensagemId, lead_id: leadId, avaliacao }),
+      })
+    } catch {
+      // silencioso — o estado otimista permanece; um refresh corrige se falhou
     }
   }
 
@@ -611,8 +634,56 @@ export default function LeadDrawer() {
                         </div>
                       )}
                       <div>{m.conteudo}</div>
-                      <div style={{ color: 'var(--text-muted)', fontSize: '0.7rem', marginTop: '0.3rem' }}>
-                        {new Date(m.enviado_em).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}
+                      <div
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          marginTop: '0.3rem',
+                          gap: '0.5rem',
+                        }}
+                      >
+                        <span style={{ color: 'var(--text-muted)', fontSize: '0.7rem' }}>
+                          {new Date(m.enviado_em).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}
+                        </span>
+                        {/* Avaliação joia/não joia — só nas respostas de texto
+                            livre da VictorIA (não em templates HSM) */}
+                        {mine && !m.template_hsm && (
+                          <span style={{ display: 'flex', gap: '0.25rem' }}>
+                            <button
+                              onClick={() => avaliarMensagem(m.id, 'boa')}
+                              title="Resposta boa"
+                              style={{
+                                border: `1px solid ${m.avaliacao === 'boa' ? 'var(--green)' : 'var(--border)'}`,
+                                background: m.avaliacao === 'boa' ? 'var(--green)' : 'var(--bg-elev)',
+                                borderRadius: 6,
+                                cursor: 'pointer',
+                                fontSize: '0.78rem',
+                                lineHeight: 1,
+                                padding: '0.15rem 0.35rem',
+                                filter: m.avaliacao === 'boa' ? 'none' : 'grayscale(0.6)',
+                              }}
+                            >
+                              👍
+                            </button>
+                            <button
+                              onClick={() => avaliarMensagem(m.id, 'ruim')}
+                              title="Resposta ruim"
+                              style={{
+                                border: `1px solid ${m.avaliacao === 'ruim' ? 'var(--red)' : 'var(--border)'}`,
+                                background: m.avaliacao === 'ruim' ? 'var(--red)' : 'var(--bg-elev)',
+                                borderRadius: 6,
+                                cursor: 'pointer',
+                                fontSize: '0.78rem',
+                                lineHeight: 1,
+                                padding: '0.15rem 0.35rem',
+                                filter: m.avaliacao === 'ruim' ? 'none' : 'grayscale(0.6)',
+                              }}
+                            >
+                              👎
+                            </button>
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
