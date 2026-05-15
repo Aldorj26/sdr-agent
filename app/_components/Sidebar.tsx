@@ -35,6 +35,10 @@ const SECTIONS: NavSection[] = [
       { label: 'Chat', href: '/chat', icon: '💬' },
     ],
   },
+  {
+    label: 'Configurações',
+    items: [{ label: 'Curadoria', href: '/curadoria', icon: '✍️' }],
+  },
 ]
 
 export default function Sidebar() {
