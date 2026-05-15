@@ -1147,22 +1147,38 @@ export async function POST(req: NextRequest) {
         // Valida os 12 campos ANTES de disparar HubSpot — defesa contra erro
         // da VictorIA marcando CADASTRO_COMPLETO prematuramente. Os 12 campos
         // obrigatórios são os do formulário Qualificação Varejo do Evo Talks.
-        const camposObrigatorios = {
-          nome_socio: 'da6ddf70',
-          email_socio: 'dafa40f0',
-          telefone: 'db8569f0',
-          nome_varejo: 'dcacfa00',
-          cnpj_matriz: 'dd2ab580',
-          faturamento_anual: 'ddb960f0',
-          valor_boleto_mensal: 'de2cbc30',
-          regiao_varejo: 'dede58f0',
-          numero_lojas: 'df6f9c70',
-          localizacao_lojas: 'e0099280',
-          possui_outra_financeira: 'e07d62f0',
-          cnpjs_adicionais: 'e0f66380',
+        // Validação DUPLA (igual Fase 1): um campo só é "faltante" se estiver
+        // vazio EM AMBOS — Evo Talks formsdata E Supabase dadosAcumulados.
+        // O Supabase é a fonte da verdade (a VictorIA acumula os dados durante
+        // a conversa); o Evo Talks pode não ter sincronizado todos ainda.
+        // Bug raiz 2026-05-15 (teste Aldo): localização coletada pela VictorIA
+        // (estava no Supabase) mas não sincronizada → HubSpot bloqueado à toa.
+        const dadosMergedF3: Record<string, string | undefined> = {
+          ...dadosAcumulados,
+          ...(resposta.dados_coletados as Record<string, string | undefined> ?? {}),
         }
+        if (!dadosMergedF3.telefone_socio?.toString().trim()) {
+          dadosMergedF3.telefone_socio = lead.telefone
+        }
+        const camposObrigatorios: Record<string, { fieldId: string; dadosKey: string }> = {
+          nome_socio:              { fieldId: 'da6ddf70', dadosKey: 'nome_socio' },
+          email_socio:             { fieldId: 'dafa40f0', dadosKey: 'email_socio' },
+          telefone:                { fieldId: 'db8569f0', dadosKey: 'telefone_socio' },
+          nome_varejo:             { fieldId: 'dcacfa00', dadosKey: 'nome_varejo' },
+          cnpj_matriz:             { fieldId: 'dd2ab580', dadosKey: 'cnpj_matriz' },
+          faturamento_anual:       { fieldId: 'ddb960f0', dadosKey: 'faturamento_anual' },
+          valor_boleto_mensal:     { fieldId: 'de2cbc30', dadosKey: 'valor_boleto_mensal' },
+          regiao_varejo:           { fieldId: 'dede58f0', dadosKey: 'regiao_varejo' },
+          numero_lojas:            { fieldId: 'df6f9c70', dadosKey: 'numero_lojas' },
+          localizacao_lojas:       { fieldId: 'e0099280', dadosKey: 'localizacao_lojas' },
+          possui_outra_financeira: { fieldId: 'e07d62f0', dadosKey: 'possui_outra_financeira' },
+          cnpjs_adicionais:        { fieldId: 'e0f66380', dadosKey: 'cnpjs_adicionais' },
+        }
+        // Valor resolvido: Evo Talks formsdata OU Supabase (o que tiver preenchido)
+        const valorF3 = (c: { fieldId: string; dadosKey: string }): string =>
+          (forms[c.fieldId]?.toString().trim() || dadosMergedF3[c.dadosKey]?.toString().trim() || '')
         const faltantes = Object.entries(camposObrigatorios)
-          .filter(([, fieldId]) => !forms[fieldId]?.toString().trim())
+          .filter(([, c]) => !valorF3(c))
           .map(([label]) => label)
 
         if (faltantes.length > 0) {
@@ -1186,46 +1202,57 @@ export async function POST(req: NextRequest) {
           // Sobrescreve a resposta pra quem ler depois saber que não foi transição real
           resposta.novo_status = 'COLETANDO_COMPLEMENTO'
         } else {
+          // Monta os 12 dados a partir do valor resolvido (Evo Talks OU Supabase).
+          const dados12 = {
+            nome_socio:              valorF3(camposObrigatorios.nome_socio),
+            email_socio:             valorF3(camposObrigatorios.email_socio),
+            telefone:                valorF3(camposObrigatorios.telefone),
+            nome_varejo:             valorF3(camposObrigatorios.nome_varejo),
+            cnpj_matriz:             valorF3(camposObrigatorios.cnpj_matriz),
+            faturamento_anual:       valorF3(camposObrigatorios.faturamento_anual),
+            valor_boleto_mensal:     valorF3(camposObrigatorios.valor_boleto_mensal),
+            regiao_varejo:           valorF3(camposObrigatorios.regiao_varejo),
+            numero_lojas:            valorF3(camposObrigatorios.numero_lojas),
+            localizacao_lojas:       valorF3(camposObrigatorios.localizacao_lojas),
+            possui_outra_financeira: valorF3(camposObrigatorios.possui_outra_financeira),
+            cnpjs_adicionais:        valorF3(camposObrigatorios.cnpjs_adicionais),
+          }
+
+          // Sincroniza o Evo Talks com os 12 campos antes de avançar — garante
+          // que o formulário Qualificação Varejo fica completo (corrige campos
+          // que a VictorIA coletou mas não chegaram a sincronizar).
+          try {
+            await updateOpportunityForms(oppId, {
+              nome_socio: dados12.nome_socio,
+              email_socio: dados12.email_socio,
+              nome_varejo: dados12.nome_varejo,
+              cnpj_matriz: dados12.cnpj_matriz,
+              faturamento_anual: dados12.faturamento_anual,
+              valor_boleto_mensal: dados12.valor_boleto_mensal,
+              regiao_varejo: dados12.regiao_varejo,
+              numero_lojas: dados12.numero_lojas,
+              localizacao_lojas: dados12.localizacao_lojas,
+              possui_outra_financeira: dados12.possui_outra_financeira,
+              cnpjs_adicionais: dados12.cnpjs_adicionais,
+            }, dados12.telefone)
+          } catch (err) {
+            console.error(`Erro ao sincronizar formulário Evo Talks — opp #${oppId}:`, err)
+          }
+
           await addOpportunityNote(oppId, `Cadastro completo (12 dados) coletado pela VictorIA. Enviado pro HubSpot.`)
           console.log(`CRM: Oportunidade #${oppId} → Cadastro Completo → HubSpot`)
           try {
-            await sendToHubSpot({
-              nome_socio: forms['da6ddf70'],
-              email_socio: forms['dafa40f0'],
-              telefone: forms['db8569f0'],
-              nome_varejo: forms['dcacfa00'],
-              cnpj_matriz: forms['dd2ab580'],
-              faturamento_anual: forms['ddb960f0'],
-              valor_boleto_mensal: forms['de2cbc30'],
-              regiao_varejo: forms['dede58f0'],
-              numero_lojas: forms['df6f9c70'],
-              localizacao_lojas: forms['e0099280'],
-              possui_outra_financeira: forms['e07d62f0'],
-              cnpjs_adicionais: forms['e0f66380'],
-            })
+            await sendToHubSpot({ ...dados12 })
           } catch (err) {
             console.error(`Erro ao enviar pro HubSpot — opp #${oppId}:`, err)
           }
 
-          // Complementa planilha AIVA APROVAÇÃO com os 5 campos da Fase 3
-          // (email, faturamento, valor_boleto_mensal, localizacao_lojas, cnpjs_adicionais).
-          // O Apps Script faz upsert por opportunity_id: se a linha já existe (foi
-          // criada na Fase 1), só preenche as células vazias — preserva o que já está
-          // lá. Se não existe, cria linha nova.
+          // Complementa planilha AIVA APROVAÇÃO. O Apps Script faz upsert por
+          // opportunity_id: se a linha já existe (criada na Fase 1), só preenche
+          // as células vazias — preserva o que já está lá.
           try {
             await sendToGoogleSheets({
-              nome_socio: forms['da6ddf70'],
-              email_socio: forms['dafa40f0'],
-              telefone: forms['db8569f0'],
-              nome_varejo: forms['dcacfa00'],
-              cnpj_matriz: forms['dd2ab580'],
-              faturamento_anual: forms['ddb960f0'],
-              valor_boleto_mensal: forms['de2cbc30'],
-              regiao_varejo: forms['dede58f0'],
-              numero_lojas: forms['df6f9c70'],
-              localizacao_lojas: forms['e0099280'],
-              possui_outra_financeira: forms['e07d62f0'],
-              cnpjs_adicionais: forms['e0f66380'],
+              ...dados12,
               status: 'CADASTRO_COMPLETO',
               opportunity_id: String(oppId),
             })
