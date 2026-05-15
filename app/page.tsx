@@ -4,7 +4,6 @@ import LeadDrawer from './_components/LeadDrawer'
 import ClickableRow from './_components/ClickableRow'
 import TimelineRow from './_components/TimelineRow'
 import SearchBar from './_components/SearchBar'
-import { MensagensPorDia, DistribuicaoStatus } from './_components/Charts'
 
 // Dinâmico pra suportar ?q= e ?status= sem cache
 export const dynamic = 'force-dynamic'
@@ -203,46 +202,6 @@ async function getAgenda() {
   return data ?? []
 }
 
-/**
- * Mensagens por dia — últimos 7 dias, agregados em BRT.
- * Usa RPC `get_mensagens_por_dia` que retorna já agrupado:
- *   [{ dia: '2026-04-14', direcao: 'in', total: 175 }, ...]
- */
-async function getMensagensPorDia() {
-  const { data } = await supabaseAdmin.rpc('get_mensagens_por_dia')
-  const rows = (data ?? []) as Array<{ dia: string; direcao: string; total: number }>
-
-  // Gera labels dos 7 dias em BRT (hoje, ontem, ..., 6 dias atrás)
-  const buckets: Record<string, { dia: string; recebidas: number; enviadas: number }> = {}
-  const fmtBrt = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/Sao_Paulo',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  })
-  const labelBrt = new Intl.DateTimeFormat('pt-BR', {
-    timeZone: 'America/Sao_Paulo',
-    day: '2-digit',
-    month: '2-digit',
-  })
-
-  for (let i = 6; i >= 0; i--) {
-    const d = new Date(Date.now() - i * 24 * 60 * 60 * 1000)
-    const iso = fmtBrt.format(d) // yyyy-mm-dd em BRT
-    const label = labelBrt.format(d) // dd/mm em BRT
-    buckets[iso] = { dia: label, recebidas: 0, enviadas: 0 }
-  }
-
-  for (const r of rows) {
-    const bucket = buckets[r.dia]
-    if (!bucket) continue
-    if (r.direcao === 'in') bucket.recebidas = Number(r.total)
-    else bucket.enviadas = Number(r.total)
-  }
-
-  return Object.values(buckets)
-}
-
 // ─── Helpers visuais ──────────────────────────────────────────────────────────
 
 const STATUS_COLOR: Record<string, string> = {
@@ -320,7 +279,7 @@ export default async function Page({
   }>
 }) {
   const sp = await searchParams
-  const [metricas, leads, agora, timeline, agenda, saude, msgsPorDia] = await Promise.all([
+  const [metricas, leads, agora, timeline, agenda, saude] = await Promise.all([
     getMetricas(),
     getRecentLeads(
       sp.q,
@@ -336,7 +295,6 @@ export default async function Page({
     getTimeline(),
     getAgenda(),
     getSaude(),
-    getMensagensPorDia(),
   ])
   const filtroAtivo = Boolean(
     sp.q ||
@@ -349,35 +307,6 @@ export default async function Page({
       sp.disparo_dia,
   )
   const total = metricas.reduce((s: number, m: { total: number }) => s + Number(m.total), 0)
-
-  // Funil
-  const porStatus: Record<string, number> = {}
-  for (const m of metricas) porStatus[m.status] = Number(m.total)
-  const disparados = total
-  const responderam =
-    (porStatus['INTERESSADO'] ?? 0) +
-    (porStatus['AGUARDANDO'] ?? 0) +
-    (porStatus['FORMULARIO_ENVIADO'] ?? 0) +
-    (porStatus['NAO_QUALIFICADO'] ?? 0) +
-    (porStatus['OPT_OUT'] ?? 0)
-  const interessados =
-    (porStatus['INTERESSADO'] ?? 0) +
-    (porStatus['AGUARDANDO'] ?? 0) +
-    (porStatus['FORMULARIO_ENVIADO'] ?? 0)
-  const qualificados = porStatus['FORMULARIO_ENVIADO'] ?? 0
-  const funil = [
-    { label: 'Disparados', value: disparados, color: '#6b7280' },
-    { label: 'Responderam', value: responderam, color: '#fb923c' },
-    { label: 'Interessados', value: interessados, color: '#34d399' },
-    { label: 'Qualificados', value: qualificados, color: '#60a5fa' },
-  ]
-  const funilMax = Math.max(...funil.map((f) => f.value), 1)
-
-  // Dados pro gráfico de pizza (métricas por status)
-  const statusChart = metricas.map((m: { status: string; total: number }) => ({
-    status: m.status,
-    total: Number(m.total),
-  }))
 
   return (
     <main>
@@ -462,42 +391,6 @@ export default async function Page({
           color={agora.lockTravado > 0 ? 'var(--red)' : 'var(--text-muted)'}
           href="/?lock_travado=true"
         />
-      </div>
-
-      {/* ─── Gráficos ──────────────────────────────────────────────────── */}
-      <h2>Tendências</h2>
-      <div className="grid-2">
-        <MensagensPorDia data={msgsPorDia} />
-        <DistribuicaoStatus data={statusChart} />
-      </div>
-
-      {/* ─── Funil ─────────────────────────────────────────────────────── */}
-      <h2>Funil de conversão</h2>
-      <div className="funnel">
-        {funil.map((f, i) => {
-          const pct = (f.value / funilMax) * 100
-          const conv = i === 0 ? null : funil[i - 1].value > 0 ? (f.value / funil[i - 1].value) * 100 : 0
-          return (
-            <div key={f.label} className="funnel-row">
-              <div className="funnel-label">
-                <span style={{ color: 'var(--text-dim)' }}>
-                  {f.label} <strong style={{ color: f.color, marginLeft: 6 }}>{f.value}</strong>
-                </span>
-                {conv !== null && (
-                  <span style={{ color: 'var(--text-muted)' }}>
-                    {conv.toFixed(1)}% da etapa anterior
-                  </span>
-                )}
-              </div>
-              <div className="funnel-bar-bg">
-                <div
-                  className="funnel-bar-fill"
-                  style={{ width: `${pct}%`, background: f.color }}
-                />
-              </div>
-            </div>
-          )
-        })}
       </div>
 
       {/* ─── Leads / Busca ────────────────────────────────────────────── */}
