@@ -81,30 +81,31 @@ function calcCustoUsd(model: string, usage: Anthropic.Usage): number {
 
 /**
  * Registra o consumo de tokens de uma chamada na tabela sdr_token_usage.
- * Fire-and-forget — nunca lança erro nem bloqueia a resposta ao lead.
+ * É AGUARDADO pelo caller — em ambiente serverless (Vercel) um insert
+ * fire-and-forget pode ser morto antes de completar quando a função encerra.
+ * Nunca lança erro: em falha só loga e segue (não bloqueia a resposta ao lead).
  */
-function logTokenUsage(model: string, contexto: string, usage: Anthropic.Usage): void {
-  const input = usage.input_tokens ?? 0
-  const output = usage.output_tokens ?? 0
-  const cacheRead = usage.cache_read_input_tokens ?? 0
-  const cacheWrite = usage.cache_creation_input_tokens ?? 0
-  const custo = calcCustoUsd(model, usage)
-  ;(async () => {
-    try {
-      const { supabaseAdmin } = await import('@/lib/supabase')
-      await supabaseAdmin.from('sdr_token_usage').insert({
-        modelo: model,
-        contexto,
-        input_tokens: input,
-        output_tokens: output,
-        cache_read_tokens: cacheRead,
-        cache_creation_tokens: cacheWrite,
-        custo_usd: custo,
-      })
-    } catch (err) {
-      console.warn('[logTokenUsage] falha ao registrar consumo:', err)
-    }
-  })()
+async function logTokenUsage(
+  model: string,
+  contexto: string,
+  usage: Anthropic.Usage,
+): Promise<void> {
+  try {
+    const custo = calcCustoUsd(model, usage)
+    const { supabaseAdmin } = await import('@/lib/supabase')
+    const { error } = await supabaseAdmin.from('sdr_token_usage').insert({
+      modelo: model,
+      contexto,
+      input_tokens: usage.input_tokens ?? 0,
+      output_tokens: usage.output_tokens ?? 0,
+      cache_read_tokens: usage.cache_read_input_tokens ?? 0,
+      cache_creation_tokens: usage.cache_creation_input_tokens ?? 0,
+      custo_usd: custo,
+    })
+    if (error) console.warn('[logTokenUsage] insert falhou:', error.message)
+  } catch (err) {
+    console.warn('[logTokenUsage] falha ao registrar consumo:', err)
+  }
 }
 
 /**
@@ -149,7 +150,7 @@ export async function callClaudeWithRetry(
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
       const msg = await getClient().messages.create(params)
-      logTokenUsage(params.model, context, msg.usage)
+      await logTokenUsage(params.model, context, msg.usage)
       return msg
     } catch (err) {
       lastErr = err
