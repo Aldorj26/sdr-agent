@@ -101,7 +101,7 @@ export default async function CampanhasPage() {
             padding: '2rem',
             textAlign: 'center',
             color: 'var(--text-muted)',
-            background: 'var(--surface)',
+            background: 'var(--bg-elev)',
             border: '1px solid var(--border)',
             borderRadius: 8,
           }}
@@ -137,10 +137,10 @@ export default async function CampanhasPage() {
                       <Link
                         href={`/?disparo_dia=${c.dia}`}
                         style={{
-                          color: '#e5e7eb',
+                          color: 'var(--accent)',
                           textDecoration: 'none',
                           fontWeight: 600,
-                          borderBottom: '1px dotted #444',
+                          borderBottom: '1px dotted var(--border-strong)',
                         }}
                         title="Ver leads desse lote"
                       >

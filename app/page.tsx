@@ -384,22 +384,8 @@ export default async function Page({
       {/* ─── Header ────────────────────────────────────────────────────── */}
       <header style={{ marginBottom: '2rem' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          <div
-            style={{
-              width: 42,
-              height: 42,
-              borderRadius: 10,
-              background: 'linear-gradient(135deg, #60a5fa, #a78bfa)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: 22,
-            }}
-          >
-            🤖
-          </div>
           <div style={{ flex: 1 }}>
-            <h1>SDR Agent AIVA</h1>
+            <h1>Pipeline AIVA</h1>
             <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.82rem' }}>
               Track Tecnologia · VictorIA · {new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}
             </p>
@@ -407,8 +393,8 @@ export default async function Page({
           <Link
             href="/campanhas"
             style={{
-              background: 'transparent',
-              color: 'var(--text-muted)',
+              background: 'var(--bg-elev)',
+              color: 'var(--text-dim)',
               textDecoration: 'none',
               padding: '0.55rem 0.9rem',
               border: '1px solid var(--border)',
@@ -423,7 +409,7 @@ export default async function Page({
           <Link
             href="/campanha"
             style={{
-              background: 'linear-gradient(135deg, #60a5fa, #a78bfa)',
+              background: 'var(--accent)',
               color: '#fff',
               textDecoration: 'none',
               padding: '0.55rem 1rem',

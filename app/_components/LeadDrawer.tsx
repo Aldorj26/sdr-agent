@@ -30,14 +30,14 @@ interface Mensagem {
 }
 
 const STATUS_COLOR: Record<string, string> = {
-  DISPARO_REALIZADO: '#888',
-  INTERESSADO: '#4ade80',
-  FORMULARIO_ENVIADO: '#60a5fa',
-  SEM_RESPOSTA: '#f59e0b',
-  OPT_OUT: '#ef4444',
-  NAO_QUALIFICADO: '#ef4444',
-  AGUARDANDO: '#a78bfa',
-  DESCARTADO: '#6b7280',
+  DISPARO_REALIZADO: '#64748b',
+  INTERESSADO: '#16a34a',
+  FORMULARIO_ENVIADO: '#2563eb',
+  SEM_RESPOSTA: '#d97706',
+  OPT_OUT: '#dc2626',
+  NAO_QUALIFICADO: '#dc2626',
+  AGUARDANDO: '#7c3aed',
+  DESCARTADO: '#94a3b8',
 }
 
 export default function LeadDrawer() {
@@ -256,11 +256,11 @@ export default function LeadDrawer() {
         style={{
           width: 'min(700px, 90vw)',
           height: '100%',
-          background: '#0a0a0a',
-          borderLeft: '1px solid #333',
+          background: 'var(--bg)',
+          borderLeft: '1px solid var(--border)',
           overflowY: 'auto',
           padding: '1.5rem',
-          color: '#eee',
+          color: 'var(--text)',
           fontFamily: 'inherit',
         }}
       >
@@ -271,11 +271,11 @@ export default function LeadDrawer() {
           <button
             onClick={() => setLeadId(null)}
             style={{
-              background: 'transparent',
-              border: '1px solid #333',
-              color: '#888',
+              background: 'var(--bg-elev)',
+              border: '1px solid var(--border-strong)',
+              color: 'var(--text-muted)',
               padding: '0.25rem 0.75rem',
-              borderRadius: '0.25rem',
+              borderRadius: '8px',
               cursor: 'pointer',
               fontFamily: 'inherit',
             }}
@@ -284,7 +284,7 @@ export default function LeadDrawer() {
           </button>
         </div>
 
-        {loading && !data && <p style={{ color: '#666' }}>Carregando dados…</p>}
+        {loading && !data && <p style={{ color: 'var(--text-muted)' }}>Carregando dados…</p>}
 
         {data && (
           <>
@@ -366,7 +366,7 @@ export default function LeadDrawer() {
                 style={{
                   marginTop: '1.25rem',
                   paddingTop: '1.25rem',
-                  borderTop: '1px dashed #2a2a2a',
+                  borderTop: '1px dashed var(--border-strong)',
                 }}
               >
                 <button
@@ -389,7 +389,6 @@ export default function LeadDrawer() {
                     fontSize: '0.9rem',
                     fontWeight: 700,
                     opacity: busy || replying ? 0.6 : 1,
-                    boxShadow: '0 0 0 1px #16a34a44',
                   }}
                 >
                   ✓ Aprovar loja — disparar link de cadastro AIVA
@@ -405,8 +404,8 @@ export default function LeadDrawer() {
                   display: 'flex',
                   gap: '0.5rem',
                   alignItems: 'flex-start',
-                  background: '#0d1a12',
-                  border: '1px solid #14532d',
+                  background: '#f0fdf4',
+                  border: '1px solid #bbf7d0',
                   borderRadius: 8,
                   padding: '0.75rem',
                 }}
@@ -421,9 +420,9 @@ export default function LeadDrawer() {
                   rows={3}
                   style={{
                     flex: 1,
-                    background: '#0a0a0a',
-                    border: '1px solid #1e3a1e',
-                    color: '#eee',
+                    background: 'var(--bg-elev)',
+                    border: '1px solid #bbf7d0',
+                    color: 'var(--text)',
                     padding: '0.5rem 0.7rem',
                     borderRadius: 6,
                     fontFamily: 'inherit',
@@ -435,9 +434,9 @@ export default function LeadDrawer() {
                   onClick={sendManualReply}
                   disabled={replying || !replyText.trim()}
                   style={{
-                    background: replying ? '#111' : '#14532d',
-                    border: '1px solid #4ade80',
-                    color: '#4ade80',
+                    background: replying ? 'var(--border-strong)' : 'var(--green)',
+                    border: 'none',
+                    color: '#fff',
                     padding: '0.5rem 0.9rem',
                     borderRadius: 6,
                     cursor: replying || !replyText.trim() ? 'not-allowed' : 'pointer',
@@ -458,8 +457,8 @@ export default function LeadDrawer() {
               <div
                 style={{
                   marginTop: '0.75rem',
-                  background: '#1a1208',
-                  border: '1px solid #78350f',
+                  background: '#fffbeb',
+                  border: '1px solid #fde68a',
                   borderRadius: 8,
                   padding: '0.9rem',
                   display: 'flex',
@@ -467,7 +466,7 @@ export default function LeadDrawer() {
                   gap: '0.6rem',
                 }}
               >
-                <div style={{ color: '#fbbf24', fontSize: '0.78rem', fontWeight: 600 }}>
+                <div style={{ color: '#b45309', fontSize: '0.78rem', fontWeight: 700 }}>
                   Editar dados do lead
                 </div>
                 <EditField
@@ -494,9 +493,9 @@ export default function LeadDrawer() {
                     onClick={() => setShowEdit(false)}
                     disabled={saving}
                     style={{
-                      background: 'transparent',
-                      border: '1px solid #444',
-                      color: '#888',
+                      background: 'var(--bg-elev)',
+                      border: '1px solid var(--border-strong)',
+                      color: 'var(--text-muted)',
                       padding: '0.45rem 0.9rem',
                       borderRadius: 6,
                       cursor: saving ? 'not-allowed' : 'pointer',
@@ -510,9 +509,9 @@ export default function LeadDrawer() {
                     onClick={saveEdit}
                     disabled={saving || !editNome.trim()}
                     style={{
-                      background: saving ? '#111' : '#78350f',
-                      border: '1px solid #fbbf24',
-                      color: '#fbbf24',
+                      background: saving ? 'var(--border-strong)' : '#d97706',
+                      border: 'none',
+                      color: '#fff',
                       padding: '0.45rem 1rem',
                       borderRadius: 6,
                       cursor: saving || !editNome.trim() ? 'not-allowed' : 'pointer',
@@ -560,7 +559,7 @@ export default function LeadDrawer() {
                 label="Acionar humano"
                 value={
                   data.lead.acionar_humano ? (
-                    <span style={{ color: '#f59e0b' }}>SIM</span>
+                    <span style={{ color: '#d97706', fontWeight: 600 }}>SIM</span>
                   ) : (
                     'não'
                   )
@@ -575,12 +574,12 @@ export default function LeadDrawer() {
               )}
             </div>
 
-            <h3 style={{ marginTop: '1.5rem', fontSize: '1rem', color: '#888' }}>
+            <h3 style={{ marginTop: '1.5rem', fontSize: '1rem', color: 'var(--text-dim)' }}>
               Histórico de mensagens ({data.mensagens.length})
             </h3>
             <div style={{ marginTop: '0.5rem' }}>
               {data.mensagens.length === 0 && (
-                <p style={{ color: '#666' }}>Sem mensagens ainda.</p>
+                <p style={{ color: 'var(--text-muted)' }}>Sem mensagens ainda.</p>
               )}
               {data.mensagens.map((m) => {
                 const mine = m.direcao === 'out'
@@ -596,8 +595,9 @@ export default function LeadDrawer() {
                     <div
                       style={{
                         maxWidth: '75%',
-                        background: mine ? '#1e3a5f' : '#1a1a1a',
-                        border: `1px solid ${mine ? '#2d5a8c' : '#2a2a2a'}`,
+                        background: mine ? '#fff3e9' : 'var(--bg-elev)',
+                        border: `1px solid ${mine ? '#fdba74' : 'var(--border)'}`,
+                        color: 'var(--text)',
                         padding: '0.6rem 0.9rem',
                         borderRadius: '0.75rem',
                         fontSize: '0.85rem',
@@ -606,12 +606,12 @@ export default function LeadDrawer() {
                       }}
                     >
                       {m.template_hsm && (
-                        <div style={{ color: '#888', fontSize: '0.7rem', marginBottom: '0.25rem' }}>
+                        <div style={{ color: 'var(--text-muted)', fontSize: '0.7rem', marginBottom: '0.25rem' }}>
                           📢 HSM: {m.template_hsm}
                         </div>
                       )}
                       <div>{m.conteudo}</div>
-                      <div style={{ color: '#555', fontSize: '0.7rem', marginTop: '0.3rem' }}>
+                      <div style={{ color: 'var(--text-muted)', fontSize: '0.7rem', marginTop: '0.3rem' }}>
                         {new Date(m.enviado_em).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}
                       </div>
                     </div>
@@ -642,14 +642,15 @@ function ActionBtn({
       onClick={onClick}
       disabled={disabled}
       style={{
-        background: '#111',
+        background: 'var(--bg-elev)',
         border: `1px solid ${color}`,
         color,
         padding: '0.35rem 0.7rem',
-        borderRadius: '0.25rem',
+        borderRadius: '8px',
         cursor: disabled ? 'not-allowed' : 'pointer',
         fontFamily: 'inherit',
         fontSize: '0.8rem',
+        fontWeight: 600,
         opacity: disabled ? 0.5 : 1,
       }}
     >
@@ -660,8 +661,8 @@ function ActionBtn({
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div style={{ display: 'flex', borderBottom: '1px solid #151515', padding: '0.35rem 0' }}>
-      <span style={{ width: 160, color: '#666' }}>{label}</span>
+    <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', padding: '0.35rem 0' }}>
+      <span style={{ width: 160, color: 'var(--text-muted)' }}>{label}</span>
       <span style={{ flex: 1 }}>{value}</span>
     </div>
   )
@@ -682,9 +683,9 @@ function EditField({
 }) {
   const inputStyle: React.CSSProperties = {
     width: '100%',
-    background: '#0a0a0a',
-    border: '1px solid #3a2a10',
-    color: '#eee',
+    background: 'var(--bg-elev)',
+    border: '1px solid #fde68a',
+    color: 'var(--text)',
     padding: '0.5rem 0.7rem',
     borderRadius: 6,
     fontFamily: 'inherit',
@@ -697,7 +698,7 @@ function EditField({
       <label
         style={{
           display: 'block',
-          color: '#a16207',
+          color: '#b45309',
           fontSize: '0.7rem',
           textTransform: 'uppercase',
           letterSpacing: '0.04em',

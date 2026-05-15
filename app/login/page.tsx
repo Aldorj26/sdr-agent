@@ -5,8 +5,11 @@ export const dynamic = 'force-dynamic'
 
 export default function LoginPage() {
   return (
-    <Suspense fallback={null}>
-      <LoginForm />
-    </Suspense>
+    <>
+      <style>{`.app-main { margin-left: 0 !important; }`}</style>
+      <Suspense fallback={null}>
+        <LoginForm />
+      </Suspense>
+    </>
   )
 }

@@ -1,19 +1,23 @@
 :root {
-  --bg: #07080b;
-  --bg-elev: #0d0f14;
-  --bg-elev-2: #12141b;
-  --border: #1d2028;
-  --border-strong: #2a2e3a;
-  --text: #e6e8ee;
-  --text-dim: #9096a3;
-  --text-muted: #5b6170;
-  --accent: #60a5fa;
-  --accent-2: #818cf8;
-  --green: #34d399;
-  --yellow: #fbbf24;
-  --red: #f87171;
-  --purple: #a78bfa;
-  --orange: #fb923c;
+  /* ─── Light theme (SDR Brusoft) ─────────────────────────────────────── */
+  --bg: #f5f6f8;
+  --bg-elev: #ffffff;
+  --bg-elev-2: #f1f3f6;
+  --border: #e3e6ec;
+  --border-strong: #cfd4de;
+  --text: #1c2230;
+  --text-dim: #4a5263;
+  --text-muted: #8b93a4;
+  --accent: #f97316;
+  --accent-2: #fb923c;
+  --green: #16a34a;
+  --yellow: #d97706;
+  --red: #dc2626;
+  --purple: #7c3aed;
+  --orange: #f97316;
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06);
+  --shadow-hover: 0 4px 12px rgba(16, 24, 40, 0.08);
+  --sidebar-w: 230px;
 }
 
 * {
@@ -28,6 +32,18 @@ html, body {
   font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
   font-feature-settings: 'cv11', 'ss01';
+}
+
+/* ─── App shell ────────────────────────────────────────────────────────── */
+.app-shell {
+  display: flex;
+  min-height: 100vh;
+}
+
+.app-main {
+  flex: 1;
+  min-width: 0;
+  margin-left: var(--sidebar-w);
 }
 
 main {
@@ -55,13 +71,132 @@ h2 {
   font-weight: 600;
 }
 
+/* ─── Sidebar ──────────────────────────────────────────────────────────── */
+.sidebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: var(--sidebar-w);
+  background: var(--bg-elev);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  padding: 1.25rem 0.85rem;
+  overflow-y: auto;
+  z-index: 50;
+}
+
+.sidebar-logo {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.35rem 0.55rem 1.25rem;
+}
+
+.sidebar-logo-mark {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #f97316, #fb923c);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  flex-shrink: 0;
+  color: #fff;
+}
+
+.sidebar-logo-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+
+.sidebar-logo-text strong {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.sidebar-logo-text span {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+}
+
+.sidebar-section {
+  margin-top: 1.1rem;
+}
+
+.sidebar-section-label {
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+  font-weight: 700;
+  padding: 0 0.55rem 0.4rem;
+}
+
+.sidebar-link {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.55rem;
+  border-radius: 8px;
+  color: var(--text-dim);
+  text-decoration: none;
+  font-size: 0.84rem;
+  font-weight: 500;
+  margin-bottom: 0.1rem;
+  transition: background 0.12s, color 0.12s;
+}
+
+.sidebar-link:hover {
+  background: var(--bg-elev-2);
+  color: var(--text);
+}
+
+.sidebar-link.active {
+  background: #fff3e9;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.sidebar-link-icon {
+  width: 16px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.sidebar-footer {
+  margin-top: auto;
+  padding: 0.85rem 0.55rem 0.35rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
 /* ─── Card ────────────────────────────────────────────────────────────── */
 .card {
-  background: linear-gradient(180deg, var(--bg-elev) 0%, var(--bg) 100%);
+  background: var(--bg-elev);
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 1.25rem 1.35rem;
-  transition: border-color 0.15s, transform 0.15s;
+  box-shadow: var(--shadow);
+  transition: border-color 0.15s, transform 0.15s, box-shadow 0.15s;
+  position: relative;
+  overflow: hidden;
+}
+
+.card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 3px;
+  height: 100%;
+  background: var(--accent);
+  opacity: 0.85;
 }
 
 .card:hover {
@@ -77,10 +212,7 @@ h2 {
 .card-clickable:hover {
   border-color: var(--accent);
   transform: translateY(-1px);
-}
-
-.card-clickable:hover .card-value {
-  filter: brightness(1.15);
+  box-shadow: var(--shadow-hover);
 }
 
 .card-label {
@@ -88,7 +220,7 @@ h2 {
   font-size: 0.7rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .card-value {
@@ -97,6 +229,7 @@ h2 {
   margin-top: 0.35rem;
   letter-spacing: -0.02em;
   line-height: 1;
+  color: var(--text);
 }
 
 .card-hint {
@@ -136,6 +269,7 @@ h2 {
   border: 1px solid var(--border);
   border-radius: 12px;
   overflow: hidden;
+  box-shadow: var(--shadow);
 }
 
 .tbl thead th {
@@ -143,7 +277,7 @@ h2 {
   padding: 0.75rem 1rem;
   border-bottom: 1px solid var(--border);
   color: var(--text-muted);
-  font-weight: 600;
+  font-weight: 700;
   font-size: 0.7rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -154,6 +288,7 @@ h2 {
   padding: 0.75rem 1rem;
   border-bottom: 1px solid var(--border);
   font-size: 0.85rem;
+  color: var(--text);
 }
 
 .tbl tbody tr:last-child td {
@@ -184,6 +319,7 @@ h2 {
   border: 1px solid var(--border);
   border-radius: 12px;
   overflow: hidden;
+  box-shadow: var(--shadow);
 }
 
 .timeline-item {
@@ -215,7 +351,7 @@ h2 {
 .timeline-actor {
   color: var(--text-dim);
   flex-shrink: 0;
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .timeline-text {
@@ -232,6 +368,7 @@ h2 {
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 1.25rem 1.5rem;
+  box-shadow: var(--shadow);
 }
 
 .funnel-row {
@@ -251,7 +388,7 @@ h2 {
 
 .funnel-label strong {
   color: var(--text);
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .funnel-bar-bg {
@@ -274,6 +411,22 @@ h2 {
   gap: 1rem;
 }
 
+@media (max-width: 1000px) {
+  .app-main {
+    margin-left: 0;
+  }
+  .sidebar {
+    position: static;
+    width: 100%;
+    height: auto;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+}
+
 @media (max-width: 900px) {
   .grid-2 {
     grid-template-columns: 1fr;
@@ -289,6 +442,7 @@ h2 {
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 1.25rem;
+  box-shadow: var(--shadow);
 }
 
 .chart-title {
@@ -296,6 +450,41 @@ h2 {
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--text-muted);
-  font-weight: 600;
+  font-weight: 700;
   margin-bottom: 1rem;
+}
+
+/* ─── Breakdown bars (token page) ───────────────────────────────────── */
+.breakdown-row {
+  margin-bottom: 0.9rem;
+}
+
+.breakdown-row:last-child {
+  margin-bottom: 0;
+}
+
+.breakdown-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  margin-bottom: 0.3rem;
+  color: var(--text-dim);
+}
+
+.breakdown-label strong {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.breakdown-bar-bg {
+  background: var(--bg-elev-2);
+  border-radius: 6px;
+  overflow: hidden;
+  height: 10px;
+}
+
+.breakdown-bar-fill {
+  height: 100%;
+  border-radius: 6px;
+  transition: width 0.5s ease;
 }

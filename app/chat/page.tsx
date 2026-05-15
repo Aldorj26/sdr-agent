@@ -159,6 +159,7 @@ export default function ChatPage() {
 const globalStyles = `
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { height: 100%; overflow: hidden; background: #0a0a0a; }
+  .app-main { margin-left: 0 !important; }
 
   .container {
     max-width: 600px;

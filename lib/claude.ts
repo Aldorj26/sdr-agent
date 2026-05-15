@@ -38,6 +38,75 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+// ─── Token usage tracking ───────────────────────────────────────────────────
+
+/**
+ * Tabela de preços da API Anthropic — USD por 1 milhão de tokens.
+ * Atualizado 2026-05-15. Match por substring do nome do modelo.
+ */
+const MODEL_PRICING: Array<{
+  match: string
+  input: number
+  output: number
+  cacheWrite: number
+  cacheRead: number
+}> = [
+  { match: 'opus',   input: 15, output: 75, cacheWrite: 18.75, cacheRead: 1.5 },
+  { match: 'sonnet', input: 3,  output: 15, cacheWrite: 3.75,  cacheRead: 0.3 },
+  { match: 'haiku',  input: 1,  output: 5,  cacheWrite: 1.25,  cacheRead: 0.1 },
+]
+
+function precoDoModelo(model: string) {
+  const m = model.toLowerCase()
+  return MODEL_PRICING.find((p) => m.includes(p.match)) ?? MODEL_PRICING[1] // default Sonnet
+}
+
+/**
+ * Calcula o custo em USD de uma chamada a partir do usage retornado pela API.
+ */
+function calcCustoUsd(model: string, usage: Anthropic.Usage): number {
+  const p = precoDoModelo(model)
+  const input = usage.input_tokens ?? 0
+  const output = usage.output_tokens ?? 0
+  const cacheRead = usage.cache_read_input_tokens ?? 0
+  const cacheWrite = usage.cache_creation_input_tokens ?? 0
+  return (
+    (input * p.input +
+      output * p.output +
+      cacheRead * p.cacheRead +
+      cacheWrite * p.cacheWrite) /
+    1_000_000
+  )
+}
+
+/**
+ * Registra o consumo de tokens de uma chamada na tabela sdr_token_usage.
+ * Fire-and-forget — nunca lança erro nem bloqueia a resposta ao lead.
+ */
+function logTokenUsage(model: string, contexto: string, usage: Anthropic.Usage): void {
+  const input = usage.input_tokens ?? 0
+  const output = usage.output_tokens ?? 0
+  const cacheRead = usage.cache_read_input_tokens ?? 0
+  const cacheWrite = usage.cache_creation_input_tokens ?? 0
+  const custo = calcCustoUsd(model, usage)
+  ;(async () => {
+    try {
+      const { supabaseAdmin } = await import('@/lib/supabase')
+      await supabaseAdmin.from('sdr_token_usage').insert({
+        modelo: model,
+        contexto,
+        input_tokens: input,
+        output_tokens: output,
+        cache_read_tokens: cacheRead,
+        cache_creation_tokens: cacheWrite,
+        custo_usd: custo,
+      })
+    } catch (err) {
+      console.warn('[logTokenUsage] falha ao registrar consumo:', err)
+    }
+  })()
+}
+
 /**
  * Detecta se o erro da Anthropic SDK é um overloaded_error (529).
  * Reconhece formatos diferentes:
@@ -79,7 +148,9 @@ export async function callClaudeWithRetry(
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
-      return await getClient().messages.create(params)
+      const msg = await getClient().messages.create(params)
+      logTokenUsage(params.model, context, msg.usage)
+      return msg
     } catch (err) {
       lastErr = err
       const overloaded = isOverloadedError(err)

@@ -170,11 +170,11 @@ export default function CampanhaForm() {
 
   const inputStyle: React.CSSProperties = {
     width: '100%',
-    background: '#0f0f0f',
-    border: '1px solid #222',
-    color: '#eee',
+    background: 'var(--bg-elev)',
+    border: '1px solid var(--border-strong)',
+    color: 'var(--text)',
     padding: '0.6rem 0.8rem',
-    borderRadius: 6,
+    borderRadius: 8,
     fontFamily: 'inherit',
     fontSize: '0.9rem',
     boxSizing: 'border-box',
@@ -216,7 +216,7 @@ export default function CampanhaForm() {
               'Cole pelo menos um telefone (min 10 digitos)'
             ) : (
               <>
-                <strong style={{ color: '#86efac' }}>
+                <strong style={{ color: 'var(--green)' }}>
                   {stats.total} telefone{stats.total === 1 ? '' : 's'} unico{stats.total === 1 ? '' : 's'}
                 </strong>{' '}
                 detectado{stats.total === 1 ? '' : 's'}
@@ -235,9 +235,9 @@ export default function CampanhaForm() {
             <details
               style={{
                 marginTop: '0.5rem',
-                background: '#0d1117',
-                border: '1px solid #1f2937',
-                borderRadius: 6,
+                background: 'var(--bg-elev-2)',
+                border: '1px solid var(--border)',
+                borderRadius: 8,
                 padding: '0.5rem 0.7rem',
               }}
               open
@@ -261,28 +261,28 @@ export default function CampanhaForm() {
               >
                 <thead>
                   <tr style={{ color: 'var(--text-muted)', textAlign: 'left' }}>
-                    <th style={{ padding: '0.25rem 0.4rem', borderBottom: '1px solid #1f2937' }}>
+                    <th style={{ padding: '0.25rem 0.4rem', borderBottom: '1px solid var(--border)' }}>
                       Nome
                     </th>
-                    <th style={{ padding: '0.25rem 0.4rem', borderBottom: '1px solid #1f2937' }}>
+                    <th style={{ padding: '0.25rem 0.4rem', borderBottom: '1px solid var(--border)' }}>
                       Telefone
                     </th>
-                    <th style={{ padding: '0.25rem 0.4rem', borderBottom: '1px solid #1f2937' }}>
+                    <th style={{ padding: '0.25rem 0.4rem', borderBottom: '1px solid var(--border)' }}>
                       Cidade
                     </th>
                   </tr>
                 </thead>
                 <tbody>
                   {leadsParsed.slice(0, 3).map((l) => (
-                    <tr key={l.telefone} style={{ color: '#e5e7eb' }}>
+                    <tr key={l.telefone} style={{ color: 'var(--text)' }}>
                       <td style={{ padding: '0.25rem 0.4rem' }}>
-                        {l.nome ?? <span style={{ color: '#6b7280' }}>(default)</span>}
+                        {l.nome ?? <span style={{ color: 'var(--text-muted)' }}>(default)</span>}
                       </td>
                       <td style={{ padding: '0.25rem 0.4rem', fontFamily: 'monospace' }}>
                         {l.telefone}
                       </td>
                       <td style={{ padding: '0.25rem 0.4rem' }}>
-                        {l.cidade ?? <span style={{ color: '#6b7280' }}>(default)</span>}
+                        {l.cidade ?? <span style={{ color: 'var(--text-muted)' }}>(default)</span>}
                       </td>
                     </tr>
                   ))}
@@ -345,11 +345,11 @@ export default function CampanhaForm() {
             type="submit"
             disabled={loading || stats.total === 0}
             style={{
-              background: loading ? '#1d2028' : 'linear-gradient(135deg, #60a5fa, #a78bfa)',
+              background: loading ? 'var(--border-strong)' : 'var(--accent)',
               color: '#fff',
               border: 'none',
               padding: '0.75rem 1.5rem',
-              borderRadius: 6,
+              borderRadius: 8,
               cursor: loading || stats.total === 0 ? 'not-allowed' : 'pointer',
               fontFamily: 'inherit',
               fontSize: '0.9rem',
@@ -379,10 +379,10 @@ function ResultadoBox({ resultado }: { resultado: Resultado }) {
         style={{
           marginTop: '1.5rem',
           padding: '1rem',
-          background: '#2b1020',
-          border: '1px solid #7f1d1d',
+          background: '#fef2f2',
+          border: '1px solid #fecaca',
           borderRadius: 8,
-          color: '#fca5a5',
+          color: '#b91c1c',
         }}
       >
         <strong>Erro:</strong> {resultado.error}
@@ -399,12 +399,12 @@ function ResultadoBox({ resultado }: { resultado: Resultado }) {
       style={{
         marginTop: '1.5rem',
         padding: '1rem 1.25rem',
-        background: '#0d1a12',
-        border: '1px solid #14532d',
+        background: '#f0fdf4',
+        border: '1px solid #bbf7d0',
         borderRadius: 8,
       }}
     >
-      <div style={{ color: '#86efac', fontWeight: 600, marginBottom: '0.75rem' }}>
+      <div style={{ color: '#15803d', fontWeight: 700, marginBottom: '0.75rem' }}>
         Disparo concluido
       </div>
       <div
@@ -418,19 +418,19 @@ function ResultadoBox({ resultado }: { resultado: Resultado }) {
         <div>
           Total: <strong>{total}</strong>
         </div>
-        <div style={{ color: '#86efac' }}>
+        <div style={{ color: 'var(--green)' }}>
           Sucesso: <strong>{sucesso}</strong>
         </div>
-        <div style={{ color: '#fca5a5' }}>
+        <div style={{ color: 'var(--red)' }}>
           Falha: <strong>{falha}</strong>
         </div>
-        <div style={{ color: '#fbbf24' }}>
+        <div style={{ color: 'var(--yellow)' }}>
           Sem WhatsApp: <strong>{invalidos}</strong>
         </div>
       </div>
       {semWhats.length > 0 && (
         <details style={{ marginTop: '0.75rem' }}>
-          <summary style={{ color: '#fbbf24', cursor: 'pointer', fontSize: '0.78rem' }}>
+          <summary style={{ color: 'var(--yellow)', cursor: 'pointer', fontSize: '0.78rem' }}>
             Numeros sem WhatsApp ({semWhats.length})
           </summary>
           <ul style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.5rem' }}>
@@ -442,7 +442,7 @@ function ResultadoBox({ resultado }: { resultado: Resultado }) {
       )}
       {falhas.length > 0 && (
         <details style={{ marginTop: '0.5rem' }}>
-          <summary style={{ color: '#fca5a5', cursor: 'pointer', fontSize: '0.78rem' }}>
+          <summary style={{ color: 'var(--red)', cursor: 'pointer', fontSize: '0.78rem' }}>
             Falhas ({falhas.length})
           </summary>
           <ul style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.5rem' }}>

@@ -38,11 +38,11 @@ export default function SearchBar() {
   }
 
   const inputStyle: React.CSSProperties = {
-    background: '#0f0f0f',
-    border: '1px solid #222',
-    color: '#eee',
+    background: 'var(--bg-elev)',
+    border: '1px solid var(--border-strong)',
+    color: 'var(--text)',
     padding: '0.5rem 0.75rem',
-    borderRadius: '0.25rem',
+    borderRadius: '8px',
     fontFamily: 'inherit',
     fontSize: '0.85rem',
   }
@@ -88,11 +88,11 @@ export default function SearchBar() {
             apply(q, status, importante, next)
           }}
           style={{
-            background: atendimentoHumano ? '#fbbf2422' : 'transparent',
-            border: atendimentoHumano ? '1px solid #fbbf2455' : '1px solid #333',
-            color: atendimentoHumano ? '#fbbf24' : '#888',
+            background: atendimentoHumano ? '#fef3c7' : 'var(--bg-elev)',
+            border: atendimentoHumano ? '1px solid #d97706' : '1px solid var(--border-strong)',
+            color: atendimentoHumano ? '#b45309' : 'var(--text-muted)',
             padding: '0.5rem 0.75rem',
-            borderRadius: '0.25rem',
+            borderRadius: '8px',
             cursor: 'pointer',
             fontFamily: 'inherit',
             fontSize: '0.85rem',
@@ -109,11 +109,11 @@ export default function SearchBar() {
             apply(q, status, next, atendimentoHumano)
           }}
           style={{
-            background: importante ? '#f59e0b22' : 'transparent',
-            border: importante ? '1px solid #f59e0b55' : '1px solid #333',
-            color: importante ? '#f59e0b' : '#888',
+            background: importante ? '#fff3e9' : 'var(--bg-elev)',
+            border: importante ? '1px solid #f97316' : '1px solid var(--border-strong)',
+            color: importante ? '#c2410c' : 'var(--text-muted)',
             padding: '0.5rem 0.75rem',
-            borderRadius: '0.25rem',
+            borderRadius: '8px',
             cursor: 'pointer',
             fontFamily: 'inherit',
             fontSize: '0.85rem',
@@ -133,11 +133,11 @@ export default function SearchBar() {
               router.push('/')
             }}
             style={{
-              background: 'transparent',
-              border: '1px solid #333',
-              color: '#888',
+              background: 'var(--bg-elev)',
+              border: '1px solid var(--border-strong)',
+              color: 'var(--text-muted)',
               padding: '0.5rem 0.75rem',
-              borderRadius: '0.25rem',
+              borderRadius: '8px',
               cursor: 'pointer',
               fontFamily: 'inherit',
               fontSize: '0.8rem',
