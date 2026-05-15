@@ -4,19 +4,22 @@ import { sendTemplate, changeOpportunityStage, addOpportunityNote, STAGES, check
 import { isDiaUtil, rotuloHorario } from '@/lib/business-time'
 
 // Templates HSM aprovados pela Meta (Evo Talks)
+// IDs dos templates HSM de follow-up. Atualizados 2026-05-15: número WhatsApp
+// trocado → templates re-aprovados pela Meta com IDs novos.
+// D+3: 12→35 | D+7: 11→38 | D+14: 10→39
 const TEMPLATES: Record<number, { id: number; texto: (nome: string) => string }> = {
   3: {
-    id: 12,
+    id: 35,
     texto: (nome) =>
       `Olá, ${nome}. Passando para informar que a AIVA já atende mais de 2.000 lojas no Brasil com financiamento rápido e zero risco de inadimplência. A ativação é gratuita. Quer entender como funciona pra sua loja? Só entrar em contato por aqui.`,
   },
   7: {
-    id: 11,
+    id: 38,
     texto: (nome) =>
       `Oi ${nome}. Passando para informar que as lojas que usam a AIVA vendem mais porque atendem clientes que não têm cartão ou limite. Taxa de 12%, você recebe em 2 dias. Faz sentido conversarmos? Aguardamos o seu retorno.`,
   },
   14: {
-    id: 10,
+    id: 39,
     texto: (nome) =>
       `Oi ${nome}, última mensagem pra não te incomodar. Se um dia quiser oferecer financiamento de celulares com 12% e zero inadimplência, é só me chamar. Estamos à disposição.`,
   },

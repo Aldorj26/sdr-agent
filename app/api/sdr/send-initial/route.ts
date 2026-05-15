@@ -9,7 +9,10 @@ interface LeadInput {
   cidade?: string
 }
 
-const HSM_TEMPLATE_ID = 9
+// Template HSM "AIVA Dia 1" — disparo inicial D+0.
+// Atualizado 2026-05-15: número WhatsApp trocado → templates re-aprovados
+// pela Meta com IDs novos (era 9, agora 41).
+const HSM_TEMPLATE_ID = 41
 
 export async function POST(req: NextRequest) {
   // Bloqueio em fim de semana (defesa em profundidade — o send-campaign também bloqueia).
