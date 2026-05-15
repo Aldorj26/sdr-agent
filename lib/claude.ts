@@ -488,6 +488,52 @@ Responda só com o primeiro nome OU "DESCONHECIDO". Sem explicação, sem aspas,
 }
 
 /**
+ * Carrega as correções da curadoria (respostas marcadas "ruim" + a correção
+ * escrita pelo time no painel) e formata como bloco few-shot pro system prompt.
+ *
+ * É o ciclo de aprendizado: o time corrige na página /curadoria → a próxima
+ * resposta da VictorIA já considera o erro corrigido. Limita às 12 correções
+ * mais recentes pra não inflar o prompt. Retorna '' se não houver nenhuma.
+ */
+async function getCorrecoesParaPrompt(): Promise<string> {
+  try {
+    const { supabaseAdmin } = await import('@/lib/supabase')
+    const { data } = await supabaseAdmin
+      .from('sdr_curadoria')
+      .select('pergunta, resposta, correcao, atualizado_em')
+      .eq('avaliacao', 'ruim')
+      .not('correcao', 'is', null)
+      .order('atualizado_em', { ascending: false })
+      .limit(12)
+
+    if (!data || data.length === 0) return ''
+
+    const exemplos = data
+      .map((c, i) => {
+        const perg = c.pergunta
+          ? `Lead disse: "${String(c.pergunta).slice(0, 300)}"`
+          : '(sem contexto da pergunta)'
+        const errada = `Você respondeu (ERRADO): "${String(c.resposta ?? '').slice(0, 400)}"`
+        const certo = `Resposta correta: "${String(c.correcao).slice(0, 400)}"`
+        return `${i + 1}. ${perg}\n   ${errada}\n   ${certo}`
+      })
+      .join('\n\n')
+
+    return (
+      `\n\n[CORREÇÕES DA CURADORIA — APRENDA COM ESTES ERROS]\n` +
+      `O time revisou respostas suas e marcou as de baixo como ERRADAS, junto da versão correta. ` +
+      `Entenda o PADRÃO do que estava errado e aplique a lição — não copie literalmente, ` +
+      `adapte ao contexto da conversa atual. Nunca repita os mesmos erros.\n\n` +
+      exemplos +
+      `\n[FIM DAS CORREÇÕES]`
+    )
+  } catch (err) {
+    console.warn('[getCorrecoesParaPrompt] falha ao carregar correções:', err)
+    return ''
+  }
+}
+
+/**
  * Processa uma mensagem recebida do lead com histórico de conversa.
  * Retorna a resposta estruturada da VictorIA.
  *
@@ -602,9 +648,15 @@ export async function processarMensagem(
   // Seleciona o prompt base por produto. Default AIVA — TRIAGEM é usado pra leads
   // inbound puros (telefone novo que entrou em contato sem prospecção prévia).
   const promptBase = produto === 'TRIAGEM' ? TRIAGEM_SYSTEM_PROMPT : AIVA_SYSTEM_PROMPT
-  const systemPrompt = promptBase
+  let systemPrompt = promptBase
     .replaceAll('{{nome}}', nomeDoLead)
     .replaceAll('{{status_atual}}', status)
+
+  // Ciclo de aprendizado: injeta as correções da curadoria como few-shot.
+  // Só pro fluxo AIVA (TRIAGEM é outro agente, com curadoria própria no futuro).
+  if (produto !== 'TRIAGEM') {
+    systemPrompt += await getCorrecoesParaPrompt()
+  }
 
   const response = await callClaudeWithRetry({
     model: 'claude-sonnet-4-5',

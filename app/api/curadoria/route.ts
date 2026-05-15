@@ -150,12 +150,38 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'mensagem_id e avaliacao são obrigatórios' }, { status: 400 })
   }
 
+  // Captura um snapshot do contexto (resposta avaliada + pergunta do lead que
+  // a precedeu). Guardado direto na linha pra alimentar o few-shot do prompt
+  // sem precisar de joins — e fica imune a mensagem deletada depois.
+  let pergunta: string | null = null
+  let resposta: string | null = null
+  const { data: msg } = await supabaseAdmin
+    .from('sdr_mensagens')
+    .select('lead_id, conteudo, enviado_em')
+    .eq('id', mensagem_id)
+    .maybeSingle()
+  if (msg) {
+    resposta = msg.conteudo as string
+    const { data: anterior } = await supabaseAdmin
+      .from('sdr_mensagens')
+      .select('conteudo')
+      .eq('lead_id', msg.lead_id)
+      .eq('direcao', 'in')
+      .lt('enviado_em', msg.enviado_em)
+      .order('enviado_em', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    pergunta = (anterior?.conteudo as string) ?? null
+  }
+
   const { error } = await supabaseAdmin.from('sdr_curadoria').upsert(
     {
       mensagem_id,
       lead_id: lead_id ?? null,
       avaliacao,
       correcao: correcao?.trim() || null,
+      pergunta,
+      resposta,
       atualizado_em: new Date().toISOString(),
     },
     { onConflict: 'mensagem_id' },
