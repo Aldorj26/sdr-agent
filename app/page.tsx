@@ -123,32 +123,54 @@ async function getAgora() {
   }
 }
 
-async function getTimeline() {
+interface LeadResumo {
+  id: string
+  nome: string
+  telefone: string
+  status: string
+  data_ultimo_contato: string | null
+}
+
+// Leads que pediram atendimento humano e ainda não foram resolvidos.
+async function getPrecisamAtendimento(): Promise<LeadResumo[]> {
   const { data } = await supabaseAdmin
-    .from('sdr_mensagens')
-    .select('id, lead_id, direcao, conteudo, template_hsm, enviado_em, sdr_leads(nome, telefone, status)')
-    .order('enviado_em', { ascending: false })
-    .limit(300)
+    .from('sdr_leads')
+    .select('id, nome, telefone, status, data_ultimo_contato')
+    .eq('acionar_humano', true)
+    .not('status', 'in', '("OPT_OUT","NAO_QUALIFICADO","DESCARTADO")')
+    .order('data_ultimo_contato', { ascending: false, nullsFirst: false })
+    .limit(12)
+  return (data ?? []) as LeadResumo[]
+}
 
-  const rows = (data ?? []) as unknown as Array<{
-    id: string
-    lead_id: string
-    direcao: 'in' | 'out'
-    conteudo: string
-    template_hsm: string | null
-    enviado_em: string
-    sdr_leads: { nome: string; telefone: string; status: string } | null
-  }>
+// Leads nas etapas finais do funil — os mais perto de fechar.
+async function getLeadsQuentes(): Promise<LeadResumo[]> {
+  const { data } = await supabaseAdmin
+    .from('sdr_leads')
+    .select('id, nome, telefone, status, data_ultimo_contato')
+    .in('status', [
+      'AGUARDANDO_APROVACAO',
+      'COLETANDO_COMPLEMENTO',
+      'CADASTRO_COMPLETO',
+      'ANALISE_AIVA',
+      'TREINAMENTO',
+    ])
+    .order('data_ultimo_contato', { ascending: false, nullsFirst: false })
+    .limit(12)
+  return (data ?? []) as LeadResumo[]
+}
 
-  const seen = new Set<string>()
-  const unique: typeof rows = []
-  for (const r of rows) {
-    if (seen.has(r.lead_id)) continue
-    seen.add(r.lead_id)
-    unique.push(r)
-    if (unique.length >= 20) break
-  }
-  return unique
+// Leads INTERESSADO com conversa ativa nas últimas 24h.
+async function getConversasHoje(): Promise<LeadResumo[]> {
+  const desde = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+  const { data } = await supabaseAdmin
+    .from('sdr_leads')
+    .select('id, nome, telefone, status, data_ultimo_contato')
+    .eq('status', 'INTERESSADO')
+    .gte('data_ultimo_contato', desde)
+    .order('data_ultimo_contato', { ascending: false })
+    .limit(12)
+  return (data ?? []) as LeadResumo[]
 }
 
 async function getSaude() {
@@ -189,19 +211,6 @@ async function getSaude() {
   }
 }
 
-async function getAgenda() {
-  const em24h = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
-  const { data } = await supabaseAdmin
-    .from('sdr_leads')
-    .select('id, nome, telefone, cidade, status, etapa_cadencia, data_proximo_followup')
-    .lte('data_proximo_followup', em24h)
-    .not('data_proximo_followup', 'is', null)
-    .not('status', 'in', '("OPT_OUT","NAO_QUALIFICADO","DESCARTADO","FORMULARIO_ENVIADO")')
-    .order('data_proximo_followup', { ascending: true })
-    .limit(20)
-  return data ?? []
-}
-
 // ─── Helpers visuais ──────────────────────────────────────────────────────────
 
 const STATUS_COLOR: Record<string, string> = {
@@ -226,25 +235,6 @@ function fmtRelativo(iso: string): string {
   return `${Math.floor(h / 24)}d`
 }
 
-function fmtFuturo(iso: string): string {
-  const diff = new Date(iso).getTime() - Date.now()
-  if (diff < 0) {
-    const min = Math.floor(-diff / 60000)
-    if (min < 60) return `atrasado ${min}m`
-    const h = Math.floor(min / 60)
-    if (h < 24) return `atrasado ${h}h`
-    return `atrasado ${Math.floor(h / 24)}d`
-  }
-  const min = Math.floor(diff / 60000)
-  if (min < 60) return `em ${min}m`
-  const h = Math.floor(min / 60)
-  if (h < 24) return `em ${h}h`
-  return `em ${Math.floor(h / 24)}d`
-}
-
-function truncate(s: string, n: number): string {
-  return s.length <= n ? s : s.slice(0, n - 1) + '…'
-}
 
 function StatusPill({ status }: { status: string }) {
   const color = STATUS_COLOR[status] ?? '#6b7280'
@@ -259,6 +249,79 @@ function StatusPill({ status }: { status: string }) {
     >
       {status}
     </span>
+  )
+}
+
+// Painel de lista de leads acionável (usado na seção de 3 colunas do dashboard).
+function PainelLeads({
+  titulo,
+  sub,
+  leads,
+  vazio,
+  verTodosHref,
+}: {
+  titulo: string
+  sub: string
+  leads: LeadResumo[]
+  vazio: string
+  verTodosHref: string
+}) {
+  return (
+    <div>
+      <div className="section-header">
+        <h2 style={{ margin: 0 }}>{titulo}</h2>
+        <span className="section-sub">{sub}</span>
+      </div>
+      <div className="timeline">
+        {leads.length === 0 ? (
+          <div style={{ padding: '1rem', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+            {vazio}
+          </div>
+        ) : (
+          <>
+            {leads.map((l) => {
+              const generico = l.nome === 'Loja' || l.nome === 'Lead'
+              const nomeExibido = generico
+                ? `${l.nome} (${l.telefone.slice(-4)})`
+                : l.nome
+              return (
+                <TimelineRow key={l.id} leadId={l.id}>
+                  <span className="timeline-time">
+                    {l.data_ultimo_contato ? fmtRelativo(l.data_ultimo_contato) : '—'}
+                  </span>
+                  <span
+                    className="timeline-actor"
+                    style={{
+                      flex: 1,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {nomeExibido}
+                  </span>
+                  <StatusPill status={l.status} />
+                </TimelineRow>
+              )
+            })}
+            <a
+              href={verTodosHref}
+              style={{
+                display: 'block',
+                padding: '0.6rem 1rem',
+                fontSize: '0.75rem',
+                color: 'var(--accent)',
+                textDecoration: 'none',
+                fontWeight: 600,
+                borderTop: '1px solid var(--border)',
+              }}
+            >
+              Ver todos →
+            </a>
+          </>
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -279,7 +342,7 @@ export default async function Page({
   }>
 }) {
   const sp = await searchParams
-  const [metricas, leads, agora, timeline, agenda, saude] = await Promise.all([
+  const [metricas, leads, agora, atendimento, quentes, conversasHoje, saude] = await Promise.all([
     getMetricas(),
     getRecentLeads(
       sp.q,
@@ -292,8 +355,9 @@ export default async function Page({
       sp.disparo_dia,
     ),
     getAgora(),
-    getTimeline(),
-    getAgenda(),
+    getPrecisamAtendimento(),
+    getLeadsQuentes(),
+    getConversasHoje(),
     getSaude(),
   ])
   const filtroAtivo = Boolean(
@@ -453,86 +517,36 @@ export default async function Page({
         </tbody>
       </table>
 
-      {/* ─── Timeline + Agenda (lado a lado) ──────────────────────────── */}
-      <div className="grid-2">
-        <div>
-          <div className="section-header">
-            <h2 style={{ margin: 0 }}>Timeline de atividade</h2>
-            <span className="section-sub">última msg por lead</span>
-          </div>
-          <div className="timeline">
-            {timeline.length === 0 && (
-              <div style={{ padding: '1rem', color: 'var(--text-muted)' }}>Sem mensagens ainda.</div>
-            )}
-            {timeline.map((m) => {
-              const nomeBase = m.sdr_leads?.nome ?? '?'
-              const nomeGenerico = nomeBase === 'Loja' || nomeBase === 'Lead'
-              const nomeExibido = nomeGenerico && m.sdr_leads?.telefone
-                ? `${nomeBase} (${m.sdr_leads.telefone.slice(-4)})`
-                : nomeBase
-              const ehIn = m.direcao === 'in'
-              return (
-                <TimelineRow key={m.id} leadId={m.lead_id}>
-                  <span className="timeline-time">{fmtRelativo(m.enviado_em)}</span>
-                  <span
-                    style={{
-                      width: 6,
-                      height: 6,
-                      borderRadius: '50%',
-                      background: ehIn ? 'var(--green)' : 'var(--accent)',
-                      flexShrink: 0,
-                    }}
-                  />
-                  <span className="timeline-actor">{nomeExibido}</span>
-                  <span className="timeline-text">{truncate(m.conteudo, 90)}</span>
-                </TimelineRow>
-              )
-            })}
-          </div>
-        </div>
-
-        <div>
-          <div className="section-header">
-            <h2 style={{ margin: 0 }}>Agenda de follow-ups</h2>
-            <span className="section-sub">atrasados + próximas 24h</span>
-          </div>
-          {agenda.length === 0 ? (
-            <div
-              className="timeline"
-              style={{ padding: '1rem', color: 'var(--text-muted)' }}
-            >
-              Nada agendado nas próximas 24h.
-            </div>
-          ) : (
-            <table className="tbl">
-              <thead>
-                <tr>
-                  <th>Quando</th>
-                  <th>Lead</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {agenda.map((l: { id: string; nome: string; telefone: string; etapa_cadencia: number; status: string; data_proximo_followup: string | null }) => {
-                  const atrasado = l.data_proximo_followup && new Date(l.data_proximo_followup).getTime() < Date.now()
-                  return (
-                    <ClickableRow key={l.telefone} leadId={l.id}>
-                      <td style={{ color: atrasado ? 'var(--red)' : 'var(--text-dim)', fontSize: '0.78rem' }}>
-                        {l.data_proximo_followup ? fmtFuturo(l.data_proximo_followup) : '—'}
-                        <div style={{ color: 'var(--text-muted)', fontSize: '0.68rem' }}>D+{l.etapa_cadencia}</div>
-                      </td>
-                      <td>
-                        <div style={{ color: 'var(--text)' }}>{l.nome}</div>
-                        <div style={{ color: 'var(--text-muted)', fontSize: '0.72rem' }}>{l.telefone}</div>
-                      </td>
-                      <td><StatusPill status={l.status} /></td>
-                    </ClickableRow>
-                  )
-                })}
-              </tbody>
-            </table>
-          )}
-        </div>
+      {/* ─── Painéis de ação (3 colunas) ──────────────────────────────── */}
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(290px, 1fr))',
+          gap: '1rem',
+          marginTop: '2.5rem',
+        }}
+      >
+        <PainelLeads
+          titulo="🔔 Precisam de atendimento"
+          sub="acionar humano"
+          leads={atendimento}
+          vazio="Ninguém esperando atendimento. ✓"
+          verTodosHref="/?aguardando_humano=true"
+        />
+        <PainelLeads
+          titulo="🔥 Leads quentes"
+          sub="perto de fechar"
+          leads={quentes}
+          vazio="Nenhum lead nas etapas finais ainda."
+          verTodosHref="/funil"
+        />
+        <PainelLeads
+          titulo="💬 Conversas ativas hoje"
+          sub="responderam nas últimas 24h"
+          leads={conversasHoje}
+          vazio="Nenhuma conversa nas últimas 24h."
+          verTodosHref="/?status=INTERESSADO"
+        />
       </div>
 
       {/* ─── Saúde do sistema ─────────────────────────────────────────── */}
