@@ -281,12 +281,23 @@ export default function LeadDrawer() {
           height: '100%',
           background: 'var(--bg)',
           borderLeft: '1px solid var(--border)',
-          overflowY: 'auto',
-          padding: '1.5rem',
           color: 'var(--text)',
           fontFamily: 'inherit',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
         }}
       >
+        {/* ─── Cabeçalho fixo ─── */}
+        <div
+          style={{
+            flexShrink: 0,
+            padding: '1.5rem',
+            borderBottom: '1px solid var(--border)',
+            overflowY: 'auto',
+            maxHeight: '62%',
+          }}
+        >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <h2 style={{ margin: 0, fontSize: '1.25rem' }}>
             {data?.lead.nome ?? (loading ? 'Carregando…' : 'Lead')}
@@ -554,15 +565,18 @@ export default function LeadDrawer() {
                 label="Oportunidade CRM"
                 value={data.lead.evotalks_opportunity_id ?? '—'}
               />
-              {data.lead.observacoes && (
-                <Row label="Observações" value={data.lead.observacoes} />
-              )}
             </div>
+          </>
+        )}
+        </div>
 
-            <h3 style={{ marginTop: '1.5rem', fontSize: '1rem', color: 'var(--text-dim)' }}>
+        {/* ─── Conversa (rolável) ─── */}
+        {data && (
+          <div style={{ flex: 1, overflowY: 'auto', padding: '1.25rem 1.5rem' }}>
+            <h3 style={{ margin: '0 0 0.5rem', fontSize: '1rem', color: 'var(--text-dim)' }}>
               Histórico de mensagens ({data.mensagens.length})
             </h3>
-            <div style={{ marginTop: '0.5rem' }}>
+            <div>
               {data.mensagens.length === 0 && (
                 <p style={{ color: 'var(--text-muted)' }}>Sem mensagens ainda.</p>
               )}
@@ -652,7 +666,7 @@ export default function LeadDrawer() {
                 )
               })}
             </div>
-          </>
+          </div>
         )}
       </div>
     </div>
