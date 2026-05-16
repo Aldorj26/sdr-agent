@@ -381,44 +381,6 @@ export default function LeadDrawer() {
               </ActionBtn>
             </div>
 
-            {/* Botão de destaque: Aprovar loja (dispara HSM cadastro AIVA).
-                Posicionado APÓS as ações pequenas e separado por divisor pra
-                ficar bem longe do botão Fechar (evita clique acidental). */}
-            {data.lead.status !== 'FORMULARIO_ENVIADO' && (
-              <div
-                style={{
-                  marginTop: '1.25rem',
-                  paddingTop: '1.25rem',
-                  borderTop: '1px dashed var(--border-strong)',
-                }}
-              >
-                <button
-                  onClick={() =>
-                    runAction(
-                      { type: 'approve' },
-                      'Aprovar essa loja? Vai disparar o template HSM com o link de cadastro AIVA + aviso CNPJ. O lead vai ficar como FORMULARIO_ENVIADO.'
-                    )
-                  }
-                  disabled={busy || replying}
-                  style={{
-                    width: '100%',
-                    background: 'linear-gradient(135deg, #16a34a, #22c55e)',
-                    border: 'none',
-                    color: '#fff',
-                    padding: '0.7rem 1rem',
-                    borderRadius: 8,
-                    cursor: busy || replying ? 'not-allowed' : 'pointer',
-                    fontFamily: 'inherit',
-                    fontSize: '0.9rem',
-                    fontWeight: 700,
-                    opacity: busy || replying ? 0.6 : 1,
-                  }}
-                >
-                  ✓ Aprovar loja — disparar link de cadastro AIVA
-                </button>
-              </div>
-            )}
-
             {/* Painel de resposta manual */}
             {showReply && (
               <div
