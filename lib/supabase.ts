@@ -179,6 +179,10 @@ export async function getLeadsForFollowup(): Promise<Lead[]> {
     .select('*')
     .lte('data_proximo_followup', now)
     .in('status', ['DISPARO_REALIZADO', 'SEM_RESPOSTA'])
+    // Lead escalado para humano fica fora da cadência automática — evita a
+    // VictorIA mandar follow-up por cima de uma conversa que um humano assumiu.
+    // Volta à cadência quando o operador clica "Atendido" (acionar_humano=false).
+    .eq('acionar_humano', false)
 
   if (error) {
     console.error('Erro ao buscar leads para follow-up:', error)

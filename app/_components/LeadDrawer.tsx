@@ -387,6 +387,15 @@ export default function LeadDrawer() {
                   Liberar lock
                 </ActionBtn>
               )}
+              {data.lead.acionar_humano && (
+                <ActionBtn
+                  disabled={busy || replying}
+                  onClick={() => runAction({ type: 'mark-atendido' }, 'Marcar como atendido? O lead sai da fila de atendimento humano e volta para a automação da VictorIA.')}
+                  color="#4ade80"
+                >
+                  ✓ Atendido
+                </ActionBtn>
+              )}
               <ActionBtn
                 disabled={busy || replying}
                 onClick={() => runAction({ type: 'mark-descartado' }, 'Marcar esse lead como DESCARTADO?')}

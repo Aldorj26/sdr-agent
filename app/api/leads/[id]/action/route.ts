@@ -14,6 +14,7 @@ type Action =
   | { type: 'reprocess' }
   | { type: 'approve' }
   | { type: 'update-lead'; nome?: string; cidade?: string; observacoes?: string }
+  | { type: 'mark-atendido' }
 
 export async function POST(
   req: NextRequest,
@@ -460,6 +461,15 @@ export async function POST(
     case 'mark-descartado': {
       updates.status = 'DESCARTADO'
       updates.data_proximo_followup = null
+      break
+    }
+    case 'mark-atendido': {
+      // Humano atendeu o lead: limpa a flag para ele sair da fila "Precisam de
+      // atendimento" e voltar à automação da VictorIA (webhook + cadência).
+      updates.acionar_humano = false
+      const carimbo = `[ATENDIDO_HUMANO:${new Date().toISOString()}]`
+      const base = (lead.observacoes ?? '').replace(/\s*\[ATENDIDO_HUMANO:[^\]]+\]/, '')
+      updates.observacoes = `${base} ${carimbo}`.trim()
       break
     }
     case 'unlock': {
