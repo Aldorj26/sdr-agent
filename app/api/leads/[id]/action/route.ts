@@ -38,6 +38,31 @@ export async function POST(
     const texto = action.mensagem?.trim()
     if (!texto) return NextResponse.json({ error: 'mensagem_vazia' }, { status: 400 })
 
+    // Janela WhatsApp 24h: texto livre só é entregue se o cliente respondeu nas
+    // últimas 24h. Fora disso o WhatsApp aceita mas NÃO entrega (silenciosamente).
+    // Bloqueia o envio e orienta o operador a usar "Follow-up agora" — que
+    // dispara um template HSM e reabre a janela de conversa.
+    const { data: janelaRow } = await supabaseAdmin
+      .from('sdr_mensagens')
+      .select('enviado_em')
+      .eq('lead_id', id)
+      .eq('direcao', 'in')
+      .gte('enviado_em', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+      .order('enviado_em', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (!janelaRow) {
+      return NextResponse.json(
+        {
+          error: 'janela_24h_fechada',
+          motivo:
+            'O cliente não responde há mais de 24h, então a janela do WhatsApp está fechada — uma mensagem de texto livre NÃO seria entregue.\n\nUse o botão "Follow-up agora" para disparar um template e reabrir a conversa. Depois que o cliente responder, você poderá responder normalmente.',
+        },
+        { status: 409 },
+      )
+    }
+
     try {
       await sendText(lead.telefone, texto, lead.evotalks_chat_id)
     } catch (err) {

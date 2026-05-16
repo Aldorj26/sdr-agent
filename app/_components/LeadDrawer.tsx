@@ -102,7 +102,11 @@ export default function LeadDrawer() {
       })
       const json = await res.json()
       if (!res.ok) {
-        window.alert(`Erro: ${json.error ?? 'desconhecido'}`)
+        if (json.error === 'janela_24h_fechada') {
+          window.alert(`⚠️ Janela de 24h fechada — mensagem não enviada\n\n${json.motivo}`)
+        } else {
+          window.alert(`Erro: ${json.error ?? 'desconhecido'}`)
+        }
         return
       }
       setReplyText('')
