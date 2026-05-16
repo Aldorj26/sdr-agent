@@ -522,8 +522,14 @@ export default function LeadDrawer() {
                 </div>
               </div>
             )}
+          </>
+        )}
+        </div>
 
-            <div style={{ marginTop: '1rem', fontSize: '0.85rem', lineHeight: 1.7 }}>
+        {/* ─── Conversa (rolável) — dados do lead + histórico ─── */}
+        {data && (
+          <div style={{ flex: 1, overflowY: 'auto', padding: '1.25rem 1.5rem' }}>
+            <div style={{ fontSize: '0.85rem', lineHeight: 1.7, marginBottom: '0.5rem' }}>
               <Row label="Telefone" value={data.lead.telefone} />
               <Row label="Cidade" value={data.lead.cidade ?? '—'} />
               <Row
@@ -566,13 +572,7 @@ export default function LeadDrawer() {
                 value={data.lead.evotalks_opportunity_id ?? '—'}
               />
             </div>
-          </>
-        )}
-        </div>
 
-        {/* ─── Conversa (rolável) ─── */}
-        {data && (
-          <div style={{ flex: 1, overflowY: 'auto', padding: '1.25rem 1.5rem' }}>
             <h3 style={{ margin: '0 0 0.5rem', fontSize: '1rem', color: 'var(--text-dim)' }}>
               Histórico de mensagens ({data.mensagens.length})
             </h3>
