@@ -3,21 +3,26 @@
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useState } from 'react'
 
-const STATUSES = [
+// Status da conversa conduzida pela VictorIA
+const STATUS_CONVERSA = [
   'DISPARO_REALIZADO',
   'INTERESSADO',
   'AGUARDANDO',
-  'AGUARDANDO_APROVACAO',
-  'COLETANDO_COMPLEMENTO',
-  'CADASTRO_COMPLETO',
-  'ANALISE_AIVA',
-  'TREINAMENTO',
   'FORMULARIO_ENVIADO',
   'SEM_RESPOSTA',
   'NAO_QUALIFICADO',
   'OPT_OUT',
   'BOT_DETECTADO',
   'DESCARTADO',
+]
+
+// Etapas do funil / processo AIVA
+const ETAPAS_FUNIL = [
+  'AGUARDANDO_APROVACAO',
+  'COLETANDO_COMPLEMENTO',
+  'CADASTRO_COMPLETO',
+  'ANALISE_AIVA',
+  'TREINAMENTO',
 ]
 
 export default function SearchBar() {
@@ -67,15 +72,30 @@ export default function SearchBar() {
       {/* Linha 2: filtros */}
       <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
         <select
-          value={status}
+          value={STATUS_CONVERSA.includes(status) ? status : ''}
           onChange={(e) => {
             setStatus(e.target.value)
             apply(q, e.target.value, importante, atendimentoHumano)
           }}
           style={inputStyle}
         >
-          <option value="">Todos os status</option>
-          {STATUSES.map((s) => (
+          <option value="">Status da conversa</option>
+          {STATUS_CONVERSA.map((s) => (
+            <option key={s} value={s}>
+              {s}
+            </option>
+          ))}
+        </select>
+        <select
+          value={ETAPAS_FUNIL.includes(status) ? status : ''}
+          onChange={(e) => {
+            setStatus(e.target.value)
+            apply(q, e.target.value, importante, atendimentoHumano)
+          }}
+          style={inputStyle}
+        >
+          <option value="">Etapa do funil</option>
+          {ETAPAS_FUNIL.map((s) => (
             <option key={s} value={s}>
               {s}
             </option>

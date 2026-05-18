@@ -4,6 +4,7 @@ import LeadDrawer from './_components/LeadDrawer'
 import ClickableRow from './_components/ClickableRow'
 import TimelineRow from './_components/TimelineRow'
 import SearchBar from './_components/SearchBar'
+import { getPipeOpportunities, PIPELINE_AIVA, STAGES } from '@/lib/evotalks'
 
 // Dinâmico pra suportar ?q= e ?status= sem cache
 export const dynamic = 'force-dynamic'
@@ -211,6 +212,50 @@ async function getSaude() {
   }
 }
 
+// ─── Etapa do funil Evo Talks ───────────────────────────────────────────────
+
+// ID da etapa do funil AIVA → rótulo legível.
+const STAGE_LABEL: Record<number, string> = {
+  [STAGES.INICIO]: 'Início',
+  [STAGES.INTERESSADO]: 'Interessado',
+  [STAGES.SEM_RESPOSTA]: 'Sem resposta',
+  [STAGES.PRE_APROVACAO]: 'Pré-aprovação',
+  [STAGES.CADASTRO_RECEBIDO]: 'Cadastro recebido',
+  [STAGES.EM_ANALISE]: 'Em análise',
+  [STAGES.CAF_PENDENTE]: 'CAF pendente',
+  [STAGES.VALIDACAO_CONCLUIDA]: 'Validação concluída',
+  [STAGES.BOT_DETECTADO]: 'Bot detectado',
+  [STAGES.TREINA]: 'Treinamento',
+}
+
+// Normaliza telefone para uma chave de comparação estável: descarta o 55 e o
+// 9º dígito do celular, deixando DDD + 8 dígitos. Casa o telefone do lead
+// (Supabase) com o mainphone da oportunidade (Evo Talks), que vêm em formatos
+// variados.
+function chaveTel(s: string | null | undefined): string {
+  let d = (s ?? '').replace(/\D/g, '')
+  if (d.startsWith('55') && d.length >= 12) d = d.slice(2)
+  if (d.length === 11) d = d.slice(0, 2) + d.slice(3)
+  return d
+}
+
+// Busca as oportunidades abertas do funil AIVA e devolve mapa chaveTel → etapa.
+// Falha de rede/API não quebra a página — devolve mapa vazio (mostra "—").
+async function getEtapasEvo(): Promise<Record<string, string>> {
+  try {
+    const opps = await getPipeOpportunities(PIPELINE_AIVA)
+    const mapa: Record<string, string> = {}
+    for (const o of opps) {
+      const k = chaveTel(o.mainphone)
+      if (k) mapa[k] = STAGE_LABEL[o.fkStage] ?? `Etapa ${o.fkStage}`
+    }
+    return mapa
+  } catch (e) {
+    console.warn('[getEtapasEvo] falhou:', e instanceof Error ? e.message : e)
+    return {}
+  }
+}
+
 // ─── Helpers visuais ──────────────────────────────────────────────────────────
 
 const STATUS_COLOR: Record<string, string> = {
@@ -342,7 +387,7 @@ export default async function Page({
   }>
 }) {
   const sp = await searchParams
-  const [metricas, leads, agora, atendimento, quentes, conversasHoje, saude] = await Promise.all([
+  const [metricas, leads, agora, atendimento, quentes, conversasHoje, saude, etapasEvo] = await Promise.all([
     getMetricas(),
     getRecentLeads(
       sp.q,
@@ -359,6 +404,7 @@ export default async function Page({
     getLeadsQuentes(),
     getConversasHoje(),
     getSaude(),
+    getEtapasEvo(),
   ])
   const filtroAtivo = Boolean(
     sp.q ||
@@ -475,7 +521,7 @@ export default async function Page({
             <th>Nome</th>
             <th>Status</th>
             <th>Telefone</th>
-            <th>Cidade</th>
+            <th>Etapa Evo</th>
             <th>Último contato</th>
           </tr>
         </thead>
@@ -506,7 +552,7 @@ export default async function Page({
                 )}
               </td>
               <td style={{ color: 'var(--text-dim)' }}>{l.telefone}</td>
-              <td style={{ color: 'var(--text-dim)' }}>{l.cidade ?? '—'}</td>
+              <td style={{ color: 'var(--text-dim)' }}>{etapasEvo[chaveTel(l.telefone)] ?? '—'}</td>
               <td style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>
                 {l.data_ultimo_contato
                   ? new Date(l.data_ultimo_contato).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })
