@@ -3,7 +3,7 @@
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useState } from 'react'
 
-// Status da conversa conduzida pela VictorIA
+// Status da conversa conduzida pela VictorIA (campo `status` no banco)
 const STATUS_CONVERSA = [
   'DISPARO_REALIZADO',
   'INTERESSADO',
@@ -16,13 +16,19 @@ const STATUS_CONVERSA = [
   'DESCARTADO',
 ]
 
-// Etapas do funil / processo AIVA
-const ETAPAS_FUNIL = [
-  'AGUARDANDO_APROVACAO',
-  'COLETANDO_COMPLEMENTO',
-  'CADASTRO_COMPLETO',
-  'ANALISE_AIVA',
-  'TREINAMENTO',
+// Etapas do funil AIVA no Evo Talks (id da etapa → rótulo).
+// IDs confirmados com Aldo em 2026-05-18. Ordem = ordem do funil.
+const ETAPAS_EVO: { id: number; label: string }[] = [
+  { id: 66, label: 'Início' },
+  { id: 47, label: 'Interessado' },
+  { id: 53, label: 'Interessado sem resposta' },
+  { id: 54, label: 'Pré-aprovação' },
+  { id: 49, label: 'Cadastro recebido' },
+  { id: 50, label: 'Em análise AIVA' },
+  { id: 70, label: 'Treinar' },
+  { id: 71, label: 'Login' },
+  { id: 51, label: 'Loja finalizada e vendendo' },
+  { id: 69, label: 'Bot detectado' },
 ]
 
 export default function SearchBar() {
@@ -30,13 +36,21 @@ export default function SearchBar() {
   const sp = useSearchParams()
   const [q, setQ] = useState(sp.get('q') ?? '')
   const [status, setStatus] = useState(sp.get('status') ?? '')
+  const [etapa, setEtapa] = useState(sp.get('etapa') ?? '')
   const [importante, setImportante] = useState(sp.get('importante') === 'true')
   const [atendimentoHumano, setAtendimentoHumano] = useState(sp.get('aguardando_humano') === 'true')
 
-  function apply(nextQ: string, nextStatus: string, nextImportante: boolean, nextAH: boolean) {
+  function apply(
+    nextQ: string,
+    nextStatus: string,
+    nextEtapa: string,
+    nextImportante: boolean,
+    nextAH: boolean,
+  ) {
     const params = new URLSearchParams()
     if (nextQ.trim()) params.set('q', nextQ.trim())
     if (nextStatus) params.set('status', nextStatus)
+    if (nextEtapa) params.set('etapa', nextEtapa)
     if (nextImportante) params.set('importante', 'true')
     if (nextAH) params.set('aguardando_humano', 'true')
     router.push(params.toString() ? `/?${params.toString()}` : '/')
@@ -58,7 +72,7 @@ export default function SearchBar() {
       <form
         onSubmit={(e) => {
           e.preventDefault()
-          apply(q, status, importante, atendimentoHumano)
+          apply(q, status, etapa, importante, atendimentoHumano)
         }}
       >
         <input
@@ -72,10 +86,10 @@ export default function SearchBar() {
       {/* Linha 2: filtros */}
       <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
         <select
-          value={STATUS_CONVERSA.includes(status) ? status : ''}
+          value={status}
           onChange={(e) => {
             setStatus(e.target.value)
-            apply(q, e.target.value, importante, atendimentoHumano)
+            apply(q, e.target.value, etapa, importante, atendimentoHumano)
           }}
           style={inputStyle}
         >
@@ -87,17 +101,17 @@ export default function SearchBar() {
           ))}
         </select>
         <select
-          value={ETAPAS_FUNIL.includes(status) ? status : ''}
+          value={etapa}
           onChange={(e) => {
-            setStatus(e.target.value)
-            apply(q, e.target.value, importante, atendimentoHumano)
+            setEtapa(e.target.value)
+            apply(q, status, e.target.value, importante, atendimentoHumano)
           }}
           style={inputStyle}
         >
-          <option value="">Etapa do funil</option>
-          {ETAPAS_FUNIL.map((s) => (
-            <option key={s} value={s}>
-              {s}
+          <option value="">Etapa do funil (Evo)</option>
+          {ETAPAS_EVO.map((et) => (
+            <option key={et.id} value={et.id}>
+              {et.label}
             </option>
           ))}
         </select>
@@ -105,7 +119,7 @@ export default function SearchBar() {
           onClick={() => {
             const next = !atendimentoHumano
             setAtendimentoHumano(next)
-            apply(q, status, importante, next)
+            apply(q, status, etapa, importante, next)
           }}
           style={{
             background: atendimentoHumano ? '#fef3c7' : 'var(--bg-elev)',
@@ -126,7 +140,7 @@ export default function SearchBar() {
           onClick={() => {
             const next = !importante
             setImportante(next)
-            apply(q, status, next, atendimentoHumano)
+            apply(q, status, etapa, next, atendimentoHumano)
           }}
           style={{
             background: importante ? '#fff3e9' : 'var(--bg-elev)',
@@ -143,11 +157,12 @@ export default function SearchBar() {
         >
           ★ Importante
         </button>
-        {(q || status || importante || atendimentoHumano) && (
+        {(q || status || etapa || importante || atendimentoHumano) && (
           <button
             onClick={() => {
               setQ('')
               setStatus('')
+              setEtapa('')
               setImportante(false)
               setAtendimentoHumano(false)
               router.push('/')

@@ -4,7 +4,7 @@ import LeadDrawer from './_components/LeadDrawer'
 import ClickableRow from './_components/ClickableRow'
 import TimelineRow from './_components/TimelineRow'
 import SearchBar from './_components/SearchBar'
-import { getPipeOpportunities, PIPELINE_AIVA, STAGES } from '@/lib/evotalks'
+import { getPipeOpportunities, PIPELINE_AIVA } from '@/lib/evotalks'
 
 // Dinâmico pra suportar ?q= e ?status= sem cache
 export const dynamic = 'force-dynamic'
@@ -26,16 +26,21 @@ async function getRecentLeads(
   followupHoje?: string,
   lockTravado?: string,
   disparoDia?: string,
+  etapa?: string,
 ) {
   const temFiltro = Boolean(
-    q || status || importante || aguardandoHumano || pausados || followupHoje || lockTravado || disparoDia,
+    q || status || importante || aguardandoHumano || pausados || followupHoje || lockTravado || disparoDia || etapa,
   )
+
+  // Filtro por etapa do Evo é aplicado em memória (a etapa não está no banco),
+  // então busca um lote maior pra não perder leads ao filtrar depois.
+  const limite = etapa ? 2000 : temFiltro ? 500 : 10
 
   let query = supabaseAdmin
     .from('sdr_leads')
     .select('id, nome, telefone, cidade, status, data_ultimo_contato, importante, acionar_humano')
     .order('data_ultimo_contato', { ascending: false, nullsFirst: false })
-    .limit(temFiltro ? 500 : 10)
+    .limit(limite)
 
   if (status) query = query.eq('status', status)
   if (importante === 'true') query = query.eq('importante', true)
@@ -214,18 +219,19 @@ async function getSaude() {
 
 // ─── Etapa do funil Evo Talks ───────────────────────────────────────────────
 
-// ID da etapa do funil AIVA → rótulo legível.
+// ID da etapa do funil AIVA (pipeline 15) → rótulo. IDs confirmados com Aldo
+// em 2026-05-18 (a API do Evo Talks não expõe o nome das etapas).
 const STAGE_LABEL: Record<number, string> = {
-  [STAGES.INICIO]: 'Início',
-  [STAGES.INTERESSADO]: 'Interessado',
-  [STAGES.SEM_RESPOSTA]: 'Sem resposta',
-  [STAGES.PRE_APROVACAO]: 'Pré-aprovação',
-  [STAGES.CADASTRO_RECEBIDO]: 'Cadastro recebido',
-  [STAGES.EM_ANALISE]: 'Em análise',
-  [STAGES.CAF_PENDENTE]: 'CAF pendente',
-  [STAGES.VALIDACAO_CONCLUIDA]: 'Validação concluída',
-  [STAGES.BOT_DETECTADO]: 'Bot detectado',
-  [STAGES.TREINA]: 'Treinamento',
+  66: 'Início',
+  47: 'Interessado',
+  53: 'Interessado sem resposta',
+  54: 'Pré-aprovação',
+  49: 'Cadastro recebido',
+  50: 'Em análise AIVA',
+  70: 'Treinar',
+  71: 'Login',
+  51: 'Loja finalizada e vendendo',
+  69: 'Bot detectado',
 }
 
 // Normaliza telefone para uma chave de comparação estável: descarta o 55 e o
@@ -239,15 +245,20 @@ function chaveTel(s: string | null | undefined): string {
   return d
 }
 
+interface EtapaEvo {
+  id: number
+  label: string
+}
+
 // Busca as oportunidades abertas do funil AIVA e devolve mapa chaveTel → etapa.
 // Falha de rede/API não quebra a página — devolve mapa vazio (mostra "—").
-async function getEtapasEvo(): Promise<Record<string, string>> {
+async function getEtapasEvo(): Promise<Record<string, EtapaEvo>> {
   try {
     const opps = await getPipeOpportunities(PIPELINE_AIVA)
-    const mapa: Record<string, string> = {}
+    const mapa: Record<string, EtapaEvo> = {}
     for (const o of opps) {
       const k = chaveTel(o.mainphone)
-      if (k) mapa[k] = STAGE_LABEL[o.fkStage] ?? `Etapa ${o.fkStage}`
+      if (k) mapa[k] = { id: o.fkStage, label: STAGE_LABEL[o.fkStage] ?? `Etapa ${o.fkStage}` }
     }
     return mapa
   } catch (e) {
@@ -384,10 +395,11 @@ export default async function Page({
     followup_hoje?: string
     lock_travado?: string
     disparo_dia?: string
+    etapa?: string
   }>
 }) {
   const sp = await searchParams
-  const [metricas, leads, agora, atendimento, quentes, conversasHoje, saude, etapasEvo] = await Promise.all([
+  const [metricas, leadsRaw, agora, atendimento, quentes, conversasHoje, saude, etapasEvo] = await Promise.all([
     getMetricas(),
     getRecentLeads(
       sp.q,
@@ -398,6 +410,7 @@ export default async function Page({
       sp.followup_hoje,
       sp.lock_travado,
       sp.disparo_dia,
+      sp.etapa,
     ),
     getAgora(),
     getPrecisamAtendimento(),
@@ -406,6 +419,12 @@ export default async function Page({
     getSaude(),
     getEtapasEvo(),
   ])
+  // Filtro por etapa do Evo Talks — aplicado em memória (a etapa não está no
+  // banco, vem do CRM via getEtapasEvo).
+  const leads = sp.etapa
+    ? leadsRaw.filter((l) => etapasEvo[chaveTel(l.telefone)]?.id === Number(sp.etapa))
+    : leadsRaw
+
   const filtroAtivo = Boolean(
     sp.q ||
       sp.status ||
@@ -414,7 +433,8 @@ export default async function Page({
       sp.pausados ||
       sp.followup_hoje ||
       sp.lock_travado ||
-      sp.disparo_dia,
+      sp.disparo_dia ||
+      sp.etapa,
   )
   const total = metricas.reduce((s: number, m: { total: number }) => s + Number(m.total), 0)
 
@@ -552,7 +572,7 @@ export default async function Page({
                 )}
               </td>
               <td style={{ color: 'var(--text-dim)' }}>{l.telefone}</td>
-              <td style={{ color: 'var(--text-dim)' }}>{etapasEvo[chaveTel(l.telefone)] ?? '—'}</td>
+              <td style={{ color: 'var(--text-dim)' }}>{etapasEvo[chaveTel(l.telefone)]?.label ?? '—'}</td>
               <td style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>
                 {l.data_ultimo_contato
                   ? new Date(l.data_ultimo_contato).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })
